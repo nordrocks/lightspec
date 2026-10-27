@@ -237,12 +237,18 @@ def feature_nodes(specs: Path, blocks: dict[str, dict]) -> tuple[dict[str, dict]
 
     Закрытая фича: «владелец» — она в `Источник:` блока, её версия сейчас в main. «меняла раньше» — версия уже
     другой фичи, связь пунктиром. Фича в работе: «меняет» или «удалит» блок main при sync.
-    Блок, которого в main уже нет, — отдельный узел `removed_block` с текстом последней версии из delta.
-    К нему — «удалила» от фичи, которая его удалила, и «меняла, позже удалён» от остальных.
+    Блок, которого в main уже нет, — узел `removed_block` с текстом последней версии из delta. К нему — «удалила»
+    от фичи, которая его удалила, и «меняла, позже удалён» от остальных. ADR удаляется заменой: `Заменяет:` у
+    нового ADR — «заменила» от закрытой фичи, «заменит» от фичи в работе.
+    Узел-заглушка «нет в main» (на блок ссылаются, а его нет) — тоже не блок main: если блок есть в delta
+    какой-то фичи, заглушка становится узлом удалённого блока, видимым всегда.
     Все части delta, которых в main нет, — ещё и в `gone` фичи: для панели.
     """
     features = [load_feature(path.parent) for folder in ("new", "archive") for path in sorted((specs / folder).glob("*/spec.md"))]
     removed_by = {node_id(c.entity, c.name, c.file): f.slug for f in features for c in f.changes if c.action == "REMOVED"}
+    replaced = {"adr:" + old: (f.slug, a.slug) for f in features for a in f.adrs for old in a.replaces if old != a.slug}
+    for target, (slug, _) in replaced.items():
+        removed_by.setdefault(target, slug)
     nodes: dict[str, dict] = {}
     edges: dict[tuple[str, str, str], bool] = {}
     versions: dict[str, tuple[str, object]] = {}  # удалённый блок → (фича, часть delta) с последним текстом
@@ -256,22 +262,31 @@ def feature_nodes(specs: Path, blocks: dict[str, dict]) -> tuple[dict[str, dict]
                 continue
             target = node_id(c.entity, c.name, c.file)
             block = blocks.get(target)
-            if block is None:
+            if block is None or block.get("missing"):
                 who = removed_by.get(target)
-                gone.append({"name": c.name, "file": c.file, "action": c.action, "open": folder == "new",
-                             "by": None if who == feature.slug else who})
+                gone.append({"name": c.part.title if c.name == HEADER else c.name, "file": c.file, "action": c.action, "open": folder == "new",
+                             "by": None if who == feature.slug else who, "with": replaced.get(target, (None, None))[1]})
                 if folder == "new" and c.action == "ADDED":
                     continue  # ещё не в main: добавит при sync
-                gid = "gone:" + target
-                edges[(nid, gid, "removed" if who == feature.slug else "gone")] = True
-                if c.action != "REMOVED" or gid not in versions:
-                    versions[gid] = (feature.slug, c)
+                edges[(nid, target, "removed" if who == feature.slug else "gone")] = True
+                if c.action != "REMOVED" or target not in versions:
+                    versions[target] = (feature.slug, c)
             elif folder == "new":
                 edges[(nid, target, "removes" if c.action == "REMOVED" else "changes")] = c.action == "REMOVED"
             elif source_id(block["props"].get(SOURCE)) == feature.slug:
                 edges[(nid, target, "owns")] = False
             else:
                 edges[(nid, target, "changed")] = True  # пунктир: в main уже версия другой фичи
+        for a in feature.adrs:
+            for old in a.replaces:
+                target = "adr:" + old
+                if old == a.slug:
+                    continue
+                if folder == "new" and target in blocks and not blocks[target].get("missing"):
+                    edges[(nid, target, "will_replace")] = True
+                elif folder == "archive":
+                    edges[(nid, target, "replaced")] = True
+                    versions.setdefault(target, None)
         for base in prop_idents(head.prop("Основа") if head else None):
             edges[(nid, "feature:" + base, "based")] = False
         nodes[nid] = {
@@ -280,9 +295,13 @@ def feature_nodes(specs: Path, blocks: dict[str, dict]) -> tuple[dict[str, dict]
             "file": f"{folder}/{feature.slug}/spec.md", "props": {p.name: p.value for p in head.props} if head else {},
             "gone": gone, "text": "\n".join(feature.spec.doc.lines).strip(),
         }
-    for gid, (slug, c) in versions.items():
-        nodes[gid] = make_node(gid, c.entity, c.file, None, c.frag, c.clean, True,
-                               removed_block=True, version=slug, by=removed_by.get(gid[5:]))
+    for gid, version in versions.items():
+        if version is None:
+            continue  # заменённый ADR, которого нет в delta ни одной фичи: остаётся заглушкой
+        slug, c = version
+        nodes[gid] = make_node(gid, c.entity, c.file, None, c.frag, c.clean, True, removed_block=True, version=slug,
+                               by=removed_by.get(gid), replaced_with=replaced.get(gid, (None, None))[1],
+                               referenced=bool(blocks.get(gid, {}).get("missing")))
     return nodes, {e: r for e, r in edges.items() if e[1] in blocks or e[1] in nodes}
 
 
