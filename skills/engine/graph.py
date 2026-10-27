@@ -155,15 +155,15 @@ def build_graph(folder: Path) -> dict:
     edges: set[tuple[str, str, str]] = set()
     for c in feature.changes:
         nid = node_id(c.entity, c.name, c.file)
-        frag, lines, delta = c.frag, c.clean, True
+        # Текст — всегда дельта. Связи REMOVED-части — от блока в main: в delta у неё только заголовок.
+        linked = c.frag
         if c.action == REMOVED and c.name != HEADER:
             found = find_block(before, nid)
-            if found:
-                frag, lines, delta = found[2], found[3], False
+            linked = found[2] if found else c.frag
         owner = "spec" if c.entity in ("requirements", "contracts") else "plan"
-        nodes[nid] = make_node(nid, c.entity, c.file, c.action, frag, lines, delta,
+        nodes[nid] = make_node(nid, c.entity, c.file, c.action, c.frag, c.clean, True,
                                source=c.source, reason=c.prop(REASON), owner=owner)
-        edges.update(edges_of(nid, c.entity, c.name, frag))
+        edges.update(edges_of(nid, c.entity, c.name, linked))
 
     if folder.parent.name == "archive":
         mark_later(nodes, feature, before, adrs)

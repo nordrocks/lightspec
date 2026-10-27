@@ -231,6 +231,7 @@ let view = VIEWS.includes(hashView) ? hashView : localStorage.getItem("sdd-view"
 let selected = hashId.length ? decodeURIComponent(hashId.join("/")) : null;
 // Фича, открытая в общем режиме: граф её изменений. `graph <фича>` открывает страницу сразу на ней: `/?feature=<ID>`.
 let focusFeature = new URLSearchParams(location.search).get("feature");
+let pickSpec = !!focusFeature && !selected;  // при входе в режим фичи выбрать спеку, когда придёт граф
 let showLegend = localStorage.getItem("sdd-legend") === "1";  // подписи цветов кружков в шапке столбцов
 const query = () => focusFeature ? "?feature=" + encodeURIComponent(focusFeature) : "";
 let featureInfo = null;  // узел фичи из общего графа: «Нет в main» для панели спеки в режиме фичи
@@ -595,7 +596,7 @@ function textHtml(n) {
       + `<div class="md">${markdown(active[2] || "")}</div>`;
   }
   if (!n.text) return "";
-  return `<h3>${n.action === "REMOVED" ? "Текст в main — удаляется" : "Текст"}</h3><div class="md">${markdown(n.text)}</div>`;
+  return `<h3>Текст</h3><div class="md">${markdown(n.text)}</div>`;
 }
 
 // --- отрисовка и живое обновление ---
@@ -633,6 +634,7 @@ function openFeature(slug) {
   focusFeature = slug;
   selected = null;
   pathTask = null;
+  pickSpec = !!slug;
   loadFeatureInfo(slug);
   hovered = null;
   version = null;
@@ -657,7 +659,12 @@ async function refresh() {
       version = g.version;
       $("#banner").hidden = !g.error;
       if (g.error) $("#banner").textContent = "Не удалось разобрать файлы, показан прошлый граф: " + g.error;
-      else { setGraph(g); render(); }
+      else {
+        setGraph(g);
+        // Вход в режим фичи: спека выбрана сразу — стрелки всей фичи и её текст в панели.
+        if (pickSpec && g.mode === "feature") { pathTask = selected = "spec:" + g.feature.slug; pickSpec = false; }
+        render();
+      }
     }
     $("#live").textContent = "● обновлено " + new Date().toLocaleTimeString("ru-RU");
   } catch {
