@@ -686,9 +686,18 @@ function select(id) {
   render();
 }
 
+let switches = null;  // счётчик переключений активной фичи на сервере: вырос — перейти на активную фичу
+
 async function refresh() {
   try {
-    const v = await (await fetch("/version" + query(), { cache: "no-store" })).text();
+    const st = await (await fetch("/state" + query(), { cache: "no-store" })).json();
+    // Агент начал работу над фичей (`graph <фича> --background`) — страница переходит на неё.
+    if (switches !== null && st.switches !== switches) {
+      switches = st.switches;
+      if ((st.active || null) !== focusFeature) { openFeature(st.active || null); return; }
+    }
+    switches = st.switches;
+    const v = st.version;
     $("#live").classList.remove("down");
     $("#view").classList.remove("stale");
     if (v !== version) {

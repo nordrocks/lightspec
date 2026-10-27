@@ -52,6 +52,8 @@ def main() -> None:
     p.add_argument("--port", type=int, default=8765, help="порт, по умолчанию 8765")
     p.add_argument("--open", action="store_true", help="открыть страницу в браузере")
     p.add_argument("--json", action="store_true", help="напечатать граф в JSON и выйти")
+    p.add_argument("--background", action="store_true",
+                   help="сервер проекта запущен — переключить его на фичу, нет — запустить в фоне. Команда сразу выходит")
 
     args = parser.parse_args()
     if args.command == "next":
@@ -68,7 +70,7 @@ def main() -> None:
         from . import graph
         source = (graph.FeatureGraph(find_feature(args.feature, args.specs)) if args.feature
                   else graph.MainGraph((args.specs or Path("specs")).resolve()))
-        graph.main(source, args.port, args.open, args.json)
+        graph.main(source, args.port, args.open, args.json, args.background)
     else:
         folder = find_feature(args.feature, args.specs)
         if not (folder / "spec.md").is_file():

@@ -11,7 +11,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import socket
+import subprocess
 import sys
+import tempfile
+import time
+import urllib.request
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs
@@ -405,18 +410,42 @@ def focused(source: FeatureGraph | MainGraph, query: str) -> FeatureGraph | Main
     return source
 
 
+PORTS = range(8765, 8785)  # порты серверов графа: у каждого проекта свой
+
+
 class Handler(BaseHTTPRequestHandler):
+    """Страница, граф и активная фича.
+
+    `/ping` — чей это сервер: папка specs/, активная фича, сколько секунд страница не спрашивала сервер.
+    `/activate?feature=<ID фичи>` — сделать фичу активной. Без фичи — общий режим.
+    `/state` — отпечаток графа и активная фича со счётчиком переключений: по нему страница переходит на фичу.
+    """
+
     def do_GET(self) -> None:
         route, _, query = self.path.partition("?")
-        source = focused(self.server.source, query)
+        server = self.server
+        source = focused(server.source, query)
         if route == "/":
             self.reply(PAGE.read_bytes(), "text/html; charset=utf-8")
-        elif route == "/version":
+        elif route == "/ping":
+            self.reply_json({"specs": str(server.source.specs), "active": server.active,
+                             "idle": time.time() - server.seen})
+        elif route == "/activate":
+            server.active = parse_qs(query).get("feature", [None])[0]
+            server.switches += 1
+            self.reply_json({"active": server.active})
+        elif route == "/version":  # старые открытые страницы: по нему они перезагружаются в новую версию
             self.reply(signature(source).encode(), "text/plain; charset=utf-8")
+        elif route == "/state":
+            server.seen = time.time()
+            self.reply_json({"version": signature(source), "active": server.active, "switches": server.switches})
         elif route == "/graph.json":
             self.reply(json.dumps(safe_graph(source), ensure_ascii=False).encode(), "application/json")
         else:
             self.send_error(404)
+
+    def reply_json(self, data: dict) -> None:
+        self.reply(json.dumps(data, ensure_ascii=False).encode(), "application/json")
 
     def reply(self, body: bytes, kind: str) -> None:
         self.send_response(200)
@@ -430,21 +459,87 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
-def main(source: FeatureGraph | MainGraph, port: int, open_page: bool, as_json: bool) -> None:
-    """Граф фичи — частный случай общего: сервер общего режима, страница сразу на фиче."""
+def ask(port: int, path: str) -> dict | None:
+    """Запрос к серверу графа на порту. None — там нет сервера графа."""
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}{path}", timeout=0.5) as r:
+            return json.loads(r.read())
+    except (OSError, ValueError):
+        return None
+
+
+def running(specs: Path) -> int | None:
+    """Порт уже запущенного сервера графа этого проекта."""
+    for port in PORTS:
+        info = ask(port, "/ping")
+        if info and Path(info["specs"]) == specs:
+            return port
+    return None
+
+
+def free_port() -> int:
+    """Первый свободный порт из PORTS."""
+    for port in PORTS:
+        with socket.socket() as s:
+            if s.connect_ex(("127.0.0.1", port)) != 0:
+                return port
+    sys.exit(f"нет свободного порта в {PORTS.start}–{PORTS.stop - 1}")
+
+
+def page_url(port: int, slug: str | None) -> str:
+    return f"http://127.0.0.1:{port}/" + (f"?feature={slug}" if slug else "")
+
+
+def background(source: FeatureGraph | MainGraph, open_page: bool) -> None:
+    """Сервер этого проекта уже запущен — переключить его на фичу. Нет — запустить отдельным процессом.
+
+    Страница, которую давно никто не смотрит, открывается в браузере заново.
+    """
+    specs = source.specs.resolve()
+    slug = locate(source.folder).name if isinstance(source, FeatureGraph) else None
+    port = running(specs)
+    if port:
+        ask(port, "/activate" + (f"?feature={slug}" if slug else ""))
+        idle = (ask(port, "/ping") or {}).get("idle", 0)
+        print(f"граф уже запущен: {page_url(port, slug)} — {'фича ' + slug if slug else 'общий режим'}")
+        if open_page or idle > 5:
+            webbrowser.open(page_url(port, slug))
+        return
+    port = free_port()
+    log = Path(tempfile.gettempdir()) / f"sdd-graph-{port}.log"
+    cmd = [sys.executable, str(Path(__file__).resolve().parent), "graph", *([slug] if slug else []),
+           "--specs", str(specs), "--port", str(port)]
+    with open(log, "w") as out:
+        subprocess.Popen(cmd, stdout=out, stderr=out, stdin=subprocess.DEVNULL, start_new_session=True)
+    for _ in range(30):
+        if ask(port, "/ping"):
+            break
+        time.sleep(0.1)
+    else:
+        sys.exit(f"сервер графа не запустился, лог: {log}")
+    print(f"граф запущен: {page_url(port, slug)}")
+    webbrowser.open(page_url(port, slug))
+
+
+def main(source: FeatureGraph | MainGraph, port: int, open_page: bool, as_json: bool, detach: bool = False) -> None:
+    """Граф фичи — частный случай общего: сервер общего режима, страница сразу на фиче.
+
+    detach — не держать сервер в этом процессе: переключить запущенный или запустить фоновый.
+    """
     main_dir = source.specs / "main"
     if not main_dir.is_dir():
         sys.exit(f"нет папки {main_dir}")
     if as_json:
         print(json.dumps(safe_graph(source), ensure_ascii=False, indent=2))
         return
+    if detach:
+        background(source, open_page)
+        return
     server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
-    url = f"http://127.0.0.1:{port}/"
-    if isinstance(source, FeatureGraph):
-        folder = locate(source.folder)
-        url += "?feature=" + folder.name
-        source = MainGraph(folder.parent.parent)
-    server.source = source
+    slug = locate(source.folder).name if isinstance(source, FeatureGraph) else None
+    server.source = MainGraph(source.specs.resolve())
+    server.active, server.switches, server.seen = slug, 0, time.time()
+    url = page_url(port, slug)
     print(f"граф: {url}  (Ctrl+C — остановить)", flush=True)
     if open_page:
         webbrowser.open(url)
