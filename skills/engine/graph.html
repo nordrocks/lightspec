@@ -625,6 +625,13 @@ function textHtml(n) {
     return `<div class="ptabs" role="tablist">${tabs.map(([k, title]) => `<button data-ptab="${k}" aria-selected="${k === active[0]}">${title}</button>`).join("")}</div>`
       + `<div class="md">${markdown(active[2] || "")}</div>`;
   }
+  if (n.old) {
+    // Часть delta, которая заменяет или удаляет блок: Delta — что пишет фича, Main — заменяемая версия в main.
+    const tabs = [["delta", "Delta", n.text], ["old", "Main", n.old]];
+    const active = tabs.find(([k]) => k === panelTab) || tabs[0];
+    return `<div class="ptabs" role="tablist">${tabs.map(([k, title]) => `<button data-ptab="${k}" aria-selected="${k === active[0]}">${title}</button>`).join("")}</div>`
+      + `<div class="md">${markdown(active[2] || "")}</div>`;
+  }
   if (!n.text) return "";
   return `<h3>Текст</h3><div class="md">${markdown(n.text)}</div>`;
 }
@@ -682,6 +689,7 @@ function openFeature(slug) {
 }
 
 function select(id) {
+  if (id !== selected) panelTab = null;  // новый узел — первая вкладка: Delta или Спека
   selected = id;
   render();
 }

@@ -158,6 +158,14 @@ def build_graph(folder: Path) -> dict:
 
     nodes: dict[str, dict] = {}
     edges: set[tuple[str, str, str]] = set()
+    loaded: list = []
+
+    def history_of() -> list:
+        """Все фичи — один раз и только если понадобились."""
+        if not loaded:
+            loaded.extend(all_features(feature.specs))
+        return loaded
+
     for c in feature.changes:
         nid = node_id(c.entity, c.name, c.file)
         # Текст — всегда дельта. Связи REMOVED-части — от блока в main: в delta у неё только заголовок.
@@ -171,6 +179,8 @@ def build_graph(folder: Path) -> dict:
         if c.action == REMOVED and c.entity == "contracts":
             # В delta у REMOVED нет `Тип:` — берём из блока в main или из последней версии в delta других фич.
             nodes[nid]["type"] = linked.prop("Тип") or removed_type(feature.specs, nid)
+        if c.action in ("MODIFIED", REMOVED):
+            nodes[nid]["old"] = replaced_text(c, nid, before, history_of)
         edges.update(edges_of(nid, c.entity, c.name, linked))
 
     if folder.parent.name == "archive":
@@ -263,6 +273,26 @@ def mark_later(nodes: dict[str, dict], feature, current: Main, adrs: dict) -> No
             nodes[nid]["replaced_with"] = replaced.get(nid, (None, None))[1]
         elif owner and owner != feature.slug:
             nodes[nid]["later_changed"] = owner
+
+
+def replaced_text(c, nid: str, current: Main, history) -> str | None:
+    """Версия, которую часть заменяет или удаляет: её указывает `Источник:` части delta.
+
+    Блок в main ещё с этим `Источником:` — текст из main. Иначе — часть delta той фичи. Не нашлось — None.
+    """
+    if c.name == HEADER:
+        f = current.files.get(c.file)
+        if f and f.header_source == c.source:
+            return "\n".join(f.header).strip()
+    else:
+        found = current.locate(c.entity, c.name, c.file)
+        if found and found[1].source == c.source:
+            return "\n".join(found[1].lines).strip()
+    owner = next((f for f in history() if f.slug == c.source), None)
+    for old in owner.changes if owner else []:
+        if old.action != REMOVED and old.entity == c.entity and old.name == c.name:
+            return "\n".join(old.main_lines(owner.slug)).strip()
+    return None
 
 
 def removed_type(specs: Path, nid: str) -> str | None:
