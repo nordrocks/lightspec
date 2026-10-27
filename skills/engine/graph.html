@@ -36,6 +36,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 body { margin: 0; }
 .viz-root {
   font: 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -89,7 +90,7 @@ aside { border-left: 1px solid var(--hairline); background: var(--surface-1); pa
 .node.missing .label { font-style: italic; }
 .node.REMOVED .label { text-decoration: line-through; text-decoration-color: var(--text-muted); }
 .node .body { min-width: 0; overflow-wrap: anywhere; }
-.badge { display: inline-block; font-size: 11px; color: var(--text-secondary); white-space: nowrap; }
+.badge { display: inline-block; font-size: 11px; color: var(--text-secondary); white-space: normal; overflow-wrap: anywhere; }
 .badge b { font-weight: 700; }
 .sub { font-size: 11px; color: var(--text-muted); }
 
@@ -106,6 +107,13 @@ aside { border-left: 1px solid var(--hairline); background: var(--surface-1); pa
 .edge.removed { stroke-dasharray: 4 4; }
 .graph.focus .edge { opacity: .12; }
 .graph.focus .edge.lit { opacity: 1; stroke: var(--text-primary); stroke-width: 2; }
+/* фичи в работе — синим, удалённые блоки — красным пунктиром */
+.edge.kind-changes, .edge.kind-removes, .graph.focus .edge.lit.kind-changes, .graph.focus .edge.lit.kind-removes { stroke: var(--modified); }
+.edge.kind-removed, .edge.kind-gone, .graph.focus .edge.lit.kind-removed, .graph.focus .edge.lit.kind-gone { stroke: var(--critical); stroke-dasharray: 4 4; }
+.node.gone { border: 1.5px solid var(--critical); }
+.node.gone .label { text-decoration: line-through; text-decoration-color: var(--critical); }
+#arrow-blue path { fill: var(--modified); }
+#arrow-red path { fill: var(--critical); }
 .graph.focus .node:not(.lit) > .body, .graph.focus .node:not(.lit)::before { opacity: .35; }
 marker path { fill: var(--text-muted); }
 
@@ -164,12 +172,13 @@ aside ul { margin: 0; padding-left: 18px; }
 <script>
 const SIGN = { ADDED: "+", MODIFIED: "~", REMOVED: "−" };
 const KINDS = { requirements: "требования", "domain-docs": "документация поддомена", contracts: "контракт",
-  architecture: "архитектура", conventions: "конвенции", "project-doc": "документ проекта", adr: "ADR", task: "задача plan" };
-const COLUMNS = [["plan", "Задачи plan"], ["req", "Требования"], ["contracts", "Контракты"], ["docs", "Документация и проект"]];
-const EDGE_KINDS = { implements: "реализует", documents: "документация", contract: "виден через контракт",
+  architecture: "архитектура", conventions: "конвенции", "project-doc": "документ проекта", adr: "ADR", task: "задача plan",
+  feature: "фича" };
+const COLUMNS = [["features", "Фичи"], ["plan", "Задачи plan"], ["req", "Требования"], ["contracts", "Контракты"], ["docs", "Документация и проект"]];
+const EDGE_KINDS = { removes: "удалит", removed: "удалила", gone: "меняла, позже удалён", changes: "меняет", owns: "владелец", changed: "меняла раньше", based: "опирается на", implements: "реализует", documents: "документация", contract: "виден через контракт",
   explains: "объясняет", uses: "использует модель", adr: "держится на ADR", replaces: "заменяет" };
 // Связь глазами второго конца: для панели деталей.
-const EDGE_BACK = { implements: "реализует задача", documents: "описывает задачу", contract: "виден в сценариях требования", explains: "объяснён в документации",
+const EDGE_BACK = { removes: "удалит фича в работе", removed: "удалён фичей", gone: "меняла фича", changes: "меняет фича в работе", owns: "владелец — фича", changed: "меняла раньше фича", based: "основа для", implements: "реализует задача", documents: "описывает задачу", contract: "виден в сценариях требования", explains: "объяснён в документации",
   uses: "модель для", adr: "на нём держится", replaces: "заменён" };
 
 let graph = null, version = null, page = null, hovered = null;
@@ -179,39 +188,55 @@ const [hashView, ...hashId] = location.hash.slice(1).split("/");
 let view = VIEWS.includes(hashView) ? hashView : localStorage.getItem("sdd-view") || "changes";
 let selected = hashId.length ? decodeURIComponent(hashId.join("/")) : null;
 let showContext = localStorage.getItem("sdd-context") !== "0";
+let onlyLinked = localStorage.getItem("sdd-only-linked") === "1";  // при выбранном узле — только он и его связи
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 const byId = () => Object.fromEntries(graph.nodes.map(n => [n.id, n]));
 const domainName = d => d === "_project" ? "Проект" : d.startsWith("_contracts/") ? "Контракты: " + d.slice(11) : d;
-const groupName = (col, g) => col !== "docs" ? g : g === "_project" ? "проект" : "поддомен " + g;
+const isMain = () => graph?.mode === "main";  // весь main: нет фичи, задач и изменений
+const groupName = (col, g) => col === "features" ? ({ new: "в работе", archive: "закрыты" })[g] || g
+  : col !== "docs" ? g : g === "_project" ? "проект" : "поддомен " + g;
 
 function badge(n) {
   if (n.kind === "task") return `<span class="badge">${n.done ? "☑ выполнена" : "☐ не выполнена"}</span>`;
+  if (n.kind === "feature") return `<span class="badge">${esc(n.status || "")}</span>`;
+  if (n.removed_block) return `<span class="badge">удалён из main${n.by ? " фичей " + esc(n.by) : ""}</span>`;
   if (n.missing) return `<span class="badge">нет в main</span>`;
-  if (!n.action) return `<span class="badge">не меняется</span>`;
+  if (!n.action) return isMain() ? "" : `<span class="badge">не меняется</span>`;
   return `<span class="badge"><b>${SIGN[n.action]}</b> ${n.action}</span>`;
 }
 
 function nodeHtml(n) {
-  const cls = ["node", n.action || "", n.action || n.kind === "task" ? "" : "context", n.missing ? "missing" : "",
+  const cls = ["node", n.action || "", n.action || n.kind === "task" || isMain() ? "" : "context", n.missing ? "missing" : "",
+    n.removed_block ? "gone" : "",
     n.id === selected ? "selected" : ""].join(" ");
-  const entity = n.kind !== "task" && (n.column === "docs" || !n.action) ? KINDS[n.kind] : "";
+  const entity = !["task", "feature"].includes(n.kind) && (n.column === "docs" || (!n.action && !isMain())) ? KINDS[n.kind] : "";
   const sub = [entity, n.type].filter(Boolean).join(" · ");
   return `<button class="${cls}" data-id="${esc(n.id)}"><span class="body"><span class="label">${esc(n.label)}</span><br>`
     + `${badge(n)}${sub ? ` <span class="sub">${esc(sub)}</span>` : ""}</span></button>`;
 }
 
 function visible() {
-  const nodes = graph.nodes.filter(n => showContext || n.action || n.kind === "task");
+  // удалённые блоки — только у выбранной фичи
+  const sel = selected && byId()[selected];
+  const gone = new Set(sel?.kind === "feature"
+    ? graph.edges.filter(e => e.from === sel.id && ["removed", "gone"].includes(e.kind)).map(e => e.to) : []);
+  let nodes = graph.nodes.filter(n => (!n.removed_block || gone.has(n.id) || n.id === selected)
+    && (showContext || isMain() || n.action || n.kind === "task"));
+  if (onlyLinked && sel) {
+    const near = new Set([sel.id, ...graph.edges.filter(e => e.from === sel.id).map(e => e.to),
+      ...graph.edges.filter(e => e.to === sel.id).map(e => e.from)]);
+    nodes = nodes.filter(n => near.has(n.id));
+  }
   const ids = new Set(nodes.map(n => n.id));
   return { nodes, edges: graph.edges.filter(e => ids.has(e.from) && ids.has(e.to)) };
 }
 
 // --- шаг 1: домены и блоки ---
 function renderChanges() {
-  const changes = graph.nodes.filter(n => n.action);
-  if (!changes.length) return `<p class="muted">В delta/ нет изменений.</p>`;
+  const changes = isMain() ? graph.nodes.filter(n => !n.missing && !n.removed_block && n.kind !== "feature") : graph.nodes.filter(n => n.action);
+  if (!changes.length) return `<p class="muted">${isMain() ? "В main нет блоков." : "В delta/ нет изменений."}</p>`;
   const rank = d => d === "_project" ? 2 : d.startsWith("_contracts/") ? 1 : 0;
   changes.sort((a, b) => rank(a.domain) - rank(b.domain) || a.domain.localeCompare(b.domain));
   const domains = new Map();
@@ -221,7 +246,7 @@ function renderChanges() {
     const kinds = new Map();
     for (const n of nodes) (kinds.get(n.kind) || kinds.set(n.kind, []).get(n.kind)).push(n);
     return `<section class="card"><h2>${esc(domainName(d))}</h2>`
-      + `<div class="counts">+${count("ADDED")} ~${count("MODIFIED")} −${count("REMOVED")}</div>`
+      + `<div class="counts">${isMain() ? `блоков: ${nodes.length}` : `+${count("ADDED")} ~${count("MODIFIED")} −${count("REMOVED")}`}</div>`
       + [...kinds].map(([k, ns]) => `<div class="kind">${esc(KINDS[k] || k)}</div>` + ns.map(nodeHtml).join("")).join("")
       + `</section>`;
   }).join("") + `</div>`;
@@ -230,15 +255,20 @@ function renderChanges() {
 // --- шаг 2: граф связей ---
 function renderGraph() {
   const { nodes } = visible();
-  const cols = COLUMNS.map(([key, title]) => {
+  const shown = COLUMNS.filter(([key]) => isMain() ? key !== "plan" : key !== "features");
+  const cols = shown.map(([key, title]) => {
     const groups = new Map();
     for (const n of nodes.filter(n => n.column === key)) (groups.get(n.group) || groups.set(n.group, []).get(n.group)).push(n);
     const body = [...groups].map(([g, ns]) => `<div class="group">${key === "plan" ? "" : `<div class="group-name">${esc(groupName(key, g))}</div>`}`
       + ns.map(nodeHtml).join("") + `</div>`).join("") || `<p class="muted">—</p>`;
     return `<section class="column" data-col="${key}"><h3>${title}</h3>${body}</section>`;
   }).join("");
-  return `<div class="toolbar"><label><input type="checkbox" id="ctx" ${showContext ? "checked" : ""}> блоки, которые не меняются, но связаны с изменениями</label></div>`
-    + `<div class="graph" id="graph"><svg aria-hidden="true"><defs><marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L8,4 L0,8 z"/></marker></defs></svg>${cols}</div>`;
+  const only = `<label><input type="checkbox" id="only" ${onlyLinked ? "checked" : ""}> только выбранное и его связи</label>`;
+  const toolbar = isMain()
+    ? `<div class="toolbar">${only}</div><p class="sub">Фичи → блоки: сплошная — фича-владелец, её версия в main (\`Источник:\`). Пунктир — меняла раньше, сейчас версия другой фичи. Синие — фичи в работе. Красный пунктир — блоки, которых в main уже нет: видны, когда выбрана фича.</p>`
+    : `<div class="toolbar"><label><input type="checkbox" id="ctx" ${showContext ? "checked" : ""}> блоки, которые не меняются, но связаны с изменениями</label>${only}</div>`;
+  return toolbar
+    + `<div class="graph" id="graph" style="grid-template-columns: repeat(${shown.length}, minmax(180px, 1fr))"><svg aria-hidden="true"><defs>${["arrow", "arrow-blue", "arrow-red"].map(id => `<marker id="${id}" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L8,4 L0,8 z"/></marker>`).join("")}</defs></svg>${cols}</div>`;
 }
 
 function drawEdges() {
@@ -265,8 +295,9 @@ function drawEdges() {
     }
     const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
     p.setAttribute("d", d);
-    p.setAttribute("class", "edge" + (e.removed ? " removed" : ""));
-    p.setAttribute("marker-end", "url(#arrow)");
+    p.setAttribute("class", `edge kind-${e.kind}` + (e.removed ? " removed" : ""));
+    const color = ["changes", "removes"].includes(e.kind) ? "-blue" : ["removed", "gone"].includes(e.kind) ? "-red" : "";
+    p.setAttribute("marker-end", `url(#arrow${color})`);
     p.dataset.from = e.from; p.dataset.to = e.to;
     svg.appendChild(p);
   }
@@ -374,14 +405,19 @@ function renderDetail() {
   const nodes = byId(), item = (id, verb) => `<li>${esc(verb)}: <button class="link" data-id="${esc(id)}">${esc(nodes[id]?.label ?? id)}</button></li>`;
   const links = [...graph.edges.filter(e => e.from === n.id).map(e => item(e.to, EDGE_KINDS[e.kind] || e.kind)),
     ...graph.edges.filter(e => e.to === n.id).map(e => item(e.from, EDGE_BACK[e.kind] || e.kind))];
-  const where = n.kind === "task" ? "plan.md" : n.action ? `delta/${n.file}` : `main/${n.file}`;
+  const where = n.kind === "task" ? "plan.md" : n.kind === "feature" ? n.file
+    : n.removed_block ? `удалён из main/${n.file}. Текст — версия фичи ${n.version}` : n.action ? `delta/${n.file}` : `main/${n.file}`;
   const rows = [["сущность", KINDS[n.kind] || n.kind], ["файл", where], n.owner && ["владелец", "sdd-" + n.owner],
-    n.action && ["Источник", n.source ? "feature:" + n.source : "None"], n.reason && n.reason !== "None" && ["Причина", n.reason]]
+    n.action && ["Источник", n.source ? "feature:" + n.source : "None"],
+    isMain() && n.props?.["Источник"] && ["Источник", n.props["Источник"]], n.reason && n.reason !== "None" && ["Причина", n.reason]]
     .filter(Boolean);
   el.innerHTML = `<h2>${esc(n.label)}</h2>${badge(n)}`
     + `<dl>${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl>`
     + (n.files?.length ? `<h3>Файлы</h3><ul>${n.files.map(f => `<li>${esc(f)}</li>`).join("")}</ul>` : "")
     + (links.length ? `<h3>Связи</h3><ul>${links.join("")}</ul>` : "")
+    + (n.gone?.length ? `<h3>Нет в main</h3><ul>${n.gone.map(g => `<li>${esc(g.name)} — ${esc(g.file)}: `
+      + (g.open && g.action === "ADDED" ? "добавит при sync" : g.action === "REMOVED" && !g.by ? "удалила эта фича"
+        : g.by ? `удалила фича ${esc(g.by)}` : "блока больше нет") + `</li>`).join("")}</ul>` : "")
     + (n.text ? `<h3>${n.action === "REMOVED" ? "Текст в main — удаляется" : "Текст"}</h3><div class="md">${markdown(n.text)}</div>` : "");
 }
 
@@ -390,7 +426,9 @@ function render() {
   if (!graph || !graph.nodes) return;
   const f = graph.feature;
   $("#title").textContent = `${f.title}`;
-  $("#status").textContent = `Статус: ${f.status}`;
+  $("#status").textContent = f.status ? `Статус: ${f.status}` : "";
+  $(".legend").hidden = isMain();
+  $('.tabs button[data-view="changes"]').textContent = isMain() ? "1. Домены" : "1. Изменения";
   document.title = `SDD: ${f.slug}`;
   document.querySelectorAll(".tabs button").forEach(b => b.setAttribute("aria-selected", b.dataset.view === view));
   $("#view").innerHTML = view === "graph" ? renderGraph() : renderChanges();
@@ -430,6 +468,7 @@ document.addEventListener("click", ev => {
 });
 document.addEventListener("change", ev => {
   if (ev.target.id === "ctx") { showContext = ev.target.checked; localStorage.setItem("sdd-context", showContext ? "1" : "0"); render(); }
+  if (ev.target.id === "only") { onlyLinked = ev.target.checked; localStorage.setItem("sdd-only-linked", onlyLinked ? "1" : "0"); render(); }
 });
 for (const type of ["mouseover", "focusin"]) document.addEventListener(type, ev => {
   const n = ev.target.closest?.("#graph .node");

@@ -1,8 +1,10 @@
-"""Граф изменений фичи в браузере с живым обновлением.
+"""Граф в браузере с живым обновлением: изменения фичи или весь main. Устройство графа — GRAPH.md.
 
-Шаг 1 — домены и блоки, которые фича добавляет, меняет и удаляет.
-Шаг 2 — связи изменений с задачами plan, элементами контрактов, требованиями и ADR.
-Страница перечитывает spec, plan, delta/ и main, когда меняются файлы. Команда ничего не пишет.
+Фича: шаг 1 — домены и блоки, которые она добавляет, меняет и удаляет. Шаг 2 — связи изменений с задачами
+plan, элементами контрактов, требованиями и ADR.
+Весь main: шаг 1 — домены и их блоки, шаг 2 — фичи из new/ и archive/ и связи всех блоков.
+Фича связана с блоками main по своей delta/: «владелец» — её версия в main, «меняла раньше» — уже нет.
+Страница перечитывает файлы, когда они меняются. Команда ничего не пишет.
 Для людей. Скилы её не запускают.
 """
 from __future__ import annotations
@@ -17,9 +19,9 @@ from pathlib import Path
 from . import form, links, merge
 from .ident import is_ident, prop_idents, split_list
 from .paths import main_entity
-from .props import CHANGE_PROPS, REASON
+from .props import CHANGE_PROPS, REASON, SOURCE
 from .refs import part_text_refs
-from .workspace import HEADER, Fragment, Main, load_feature, main_adrs
+from .workspace import HEADER, Fragment, Main, load_feature, main_adrs, source_id
 
 PAGE = Path(__file__).with_name("graph.html")
 REMOVED = "REMOVED"
@@ -191,6 +193,7 @@ def build_graph(folder: Path) -> dict:
 
     head = feature.spec.doc.header
     return {
+        "mode": "feature",
         "feature": {"slug": feature.slug, "title": head.title if head else None, "status": feature.status,
                     "path": str(feature.spec.path)},
         "nodes": list(nodes.values()),
@@ -198,11 +201,122 @@ def build_graph(folder: Path) -> dict:
     }
 
 
-def signature(folder: Path) -> str:
-    """Отпечаток файлов фичи и main: меняется при любой правке."""
+def build_main_graph(specs: Path) -> dict:
+    """Все блоки main и ADR со связями. Шапки файлов не показываются: связей у них нет."""
+    root = specs / "main"
+    main = Main(root)
+    nodes: dict[str, dict] = {}
+    edges: dict[tuple[str, str, str], bool] = {}
+    for rel, f in main.files.items():
+        for b in f.blocks:
+            nid = node_id(f.entity, b.name, rel)
+            nodes[nid] = make_node(nid, f.entity, rel, None, b.frag, b.lines)
+            for edge in edges_of(nid, f.entity, b.name, b.frag):
+                edges[edge] = False
+    for adr in main_adrs(root)[0]:
+        rel = f"_project/adr/{adr.path.name}"
+        nid = node_id("adr", HEADER, rel)
+        nodes[nid] = make_node(nid, "adr", rel, None, adr.head)
+    for src, dst, _ in list(edges):
+        for nid in (src, dst):
+            if nid not in nodes:
+                nodes[nid] = context_node(nid, [main], root)
+    features, feature_edges = feature_nodes(specs, nodes)
+    nodes.update(features)
+    edges.update(feature_edges)
+    return {
+        "mode": "main",
+        "feature": {"slug": "main", "title": "main: вся система", "status": None, "path": str(root)},
+        "nodes": list(nodes.values()),
+        "edges": [{"from": s, "to": d, "kind": k, "removed": r} for (s, d, k), r in edges.items()],
+    }
+
+
+def feature_nodes(specs: Path, blocks: dict[str, dict]) -> tuple[dict[str, dict], dict[tuple[str, str, str], bool]]:
+    """Фичи из new/ и archive/ и их связи с блоками main по delta/.
+
+    Закрытая фича: «владелец» — она в `Источник:` блока, её версия сейчас в main. «меняла раньше» — версия уже
+    другой фичи, связь пунктиром. Фича в работе: «меняет» или «удалит» блок main при sync.
+    Блок, которого в main уже нет, — отдельный узел `removed_block` с текстом последней версии из delta.
+    К нему — «удалила» от фичи, которая его удалила, и «меняла, позже удалён» от остальных.
+    Все части delta, которых в main нет, — ещё и в `gone` фичи: для панели.
+    """
+    features = [load_feature(path.parent) for folder in ("new", "archive") for path in sorted((specs / folder).glob("*/spec.md"))]
+    removed_by = {node_id(c.entity, c.name, c.file): f.slug for f in features for c in f.changes if c.action == "REMOVED"}
+    nodes: dict[str, dict] = {}
+    edges: dict[tuple[str, str, str], bool] = {}
+    versions: dict[str, tuple[str, object]] = {}  # удалённый блок → (фича, часть delta) с последним текстом
+    for feature in features:
+        head = feature.spec.doc.header
+        folder = feature.folder.parent.name
+        nid = "feature:" + feature.slug
+        gone = []
+        for c in feature.changes:
+            if c.name == HEADER and c.entity != "adr":
+                continue
+            target = node_id(c.entity, c.name, c.file)
+            block = blocks.get(target)
+            if block is None:
+                who = removed_by.get(target)
+                gone.append({"name": c.name, "file": c.file, "action": c.action, "open": folder == "new",
+                             "by": None if who == feature.slug else who})
+                if folder == "new" and c.action == "ADDED":
+                    continue  # ещё не в main: добавит при sync
+                gid = "gone:" + target
+                edges[(nid, gid, "removed" if who == feature.slug else "gone")] = True
+                if c.action != "REMOVED" or gid not in versions:
+                    versions[gid] = (feature.slug, c)
+            elif folder == "new":
+                edges[(nid, target, "removes" if c.action == "REMOVED" else "changes")] = c.action == "REMOVED"
+            elif source_id(block["props"].get(SOURCE)) == feature.slug:
+                edges[(nid, target, "owns")] = False
+            else:
+                edges[(nid, target, "changed")] = True  # пунктир: в main уже версия другой фичи
+        for base in prop_idents(head.prop("Основа") if head else None):
+            edges[(nid, "feature:" + base, "based")] = False
+        nodes[nid] = {
+            "id": nid, "label": head.title if head else feature.slug, "kind": "feature", "action": None,
+            "status": feature.status, "column": "features", "group": folder, "domain": folder,
+            "file": f"{folder}/{feature.slug}/spec.md", "props": {p.name: p.value for p in head.props} if head else {},
+            "gone": gone, "text": "\n".join(feature.spec.doc.lines).strip(),
+        }
+    for gid, (slug, c) in versions.items():
+        nodes[gid] = make_node(gid, c.entity, c.file, None, c.frag, c.clean, True,
+                               removed_block=True, version=slug, by=removed_by.get(gid[5:]))
+    return nodes, {e: r for e, r in edges.items() if e[1] in blocks or e[1] in nodes}
+
+
+class FeatureGraph:
+    """Граф изменений фичи."""
+
+    def __init__(self, folder: Path):
+        self.folder = folder
+
+    def build(self) -> dict:
+        return build_graph(self.folder)
+
+    def dirs(self) -> list[Path]:
+        folder = locate(self.folder)
+        return [folder, folder.parent.parent / "main"]
+
+
+class MainGraph:
+    """Граф всего main."""
+
+    def __init__(self, specs: Path):
+        self.specs = specs
+
+    def build(self) -> dict:
+        return build_main_graph(self.specs)
+
+    def dirs(self) -> list[Path]:
+        return [self.specs / "main"]
+
+
+def signature(source: FeatureGraph | MainGraph) -> str:
+    """Отпечаток файлов графа: меняется при любой правке."""
     h = hashlib.sha1()
-    folder = locate(folder)
-    for base in (folder, folder.parent.parent / "main"):
+    for base in source.dirs():
         for p in sorted(base.rglob("*.md")) if base.is_dir() else []:
             st = p.stat()
             h.update(f"{p}:{st.st_mtime_ns}:{st.st_size}\n".encode())
@@ -210,13 +324,13 @@ def signature(folder: Path) -> str:
     return h.hexdigest()[:12]
 
 
-def safe_graph(folder: Path) -> dict:
+def safe_graph(source: FeatureGraph | MainGraph) -> dict:
     """Граф или ошибка разбора: файл могут сохранить на середине правки."""
     try:
-        graph = build_graph(folder)
+        graph = source.build()
     except Exception as exc:  # noqa: BLE001 — страница показывает ошибку и держит прошлый граф
         graph = {"error": f"{type(exc).__name__}: {exc}"}
-    graph["version"] = signature(folder)
+    graph["version"] = signature(source)
     graph["page"] = hashlib.sha1(PAGE.read_bytes()).hexdigest()[:12]
     return graph
 
@@ -226,13 +340,13 @@ def safe_graph(folder: Path) -> dict:
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         route = self.path.split("?")[0]
-        folder = self.server.folder
+        source = self.server.source
         if route == "/":
             self.reply(PAGE.read_bytes(), "text/html; charset=utf-8")
         elif route == "/version":
-            self.reply(signature(folder).encode(), "text/plain; charset=utf-8")
+            self.reply(signature(source).encode(), "text/plain; charset=utf-8")
         elif route == "/graph.json":
-            self.reply(json.dumps(safe_graph(folder), ensure_ascii=False).encode(), "application/json")
+            self.reply(json.dumps(safe_graph(source), ensure_ascii=False).encode(), "application/json")
         else:
             self.send_error(404)
 
@@ -248,16 +362,18 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
-def main(folder: Path, port: int, open_page: bool, as_json: bool) -> None:
-    if not (folder.parent.parent / "main").is_dir():
-        sys.exit(f"нет папки {folder.parent.parent / 'main'}")
+def main(source: FeatureGraph | MainGraph, port: int, open_page: bool, as_json: bool) -> None:
+    main_dir = source.dirs()[-1]
+    if not main_dir.is_dir():
+        sys.exit(f"нет папки {main_dir}")
     if as_json:
-        print(json.dumps(safe_graph(folder), ensure_ascii=False, indent=2))
+        print(json.dumps(safe_graph(source), ensure_ascii=False, indent=2))
         return
     server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
-    server.folder = folder
+    server.source = source
     url = f"http://127.0.0.1:{port}/"
-    print(f"граф изменений: {url}  (Ctrl+C — остановить)", flush=True)
+    what = "граф main" if isinstance(source, MainGraph) else "граф изменений"
+    print(f"{what}: {url}  (Ctrl+C — остановить)", flush=True)
     if open_page:
         webbrowser.open(url)
     try:

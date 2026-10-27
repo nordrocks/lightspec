@@ -101,4 +101,5 @@ fenced      = FENCE-OPEN { LINE } FENCE-CLOSE ;     (* код и диаграм�
 | `schema`, `semantics`, `form` | схема сущности из «Структуры» формата и проверка по ней |
 | `links` | связи между файлами |
 | `workspace`, `merge` | `specs/` в памяти, вливание delta в main |
-| `commands`, `numbering`, `examples`, `graph`, `cli` | команды |
+| `commands`, `numbering`, `examples`, `cli` | команды |
+| `graph` | граф для людей — `GRAPH.md` |

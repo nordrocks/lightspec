@@ -46,8 +46,8 @@ def main() -> None:
 
     sub.add_parser("examples", help="примеры formats/ по своим форматам — для тех, кто меняет фреймворк")
 
-    p = sub.add_parser("graph", help="граф изменений фичи в браузере — для людей")
-    p.add_argument("feature", help="путь к spec.md или папке фичи, <ID фичи> или <номер>")
+    p = sub.add_parser("graph", help="граф в браузере — для людей: изменения фичи или без фичи весь main")
+    p.add_argument("feature", nargs="?", help="путь к spec.md или папке фичи, <ID фичи> или <номер>. Нет — весь main")
     p.add_argument("--specs", type=Path, help="папка specs/, по умолчанию ./specs — для поиска по ID")
     p.add_argument("--port", type=int, default=8765, help="порт, по умолчанию 8765")
     p.add_argument("--open", action="store_true", help="открыть страницу в браузере")
@@ -66,7 +66,9 @@ def main() -> None:
         examples.main()
     elif args.command == "graph":
         from . import graph
-        graph.main(find_feature(args.feature, args.specs), args.port, args.open, args.json)
+        source = (graph.FeatureGraph(find_feature(args.feature, args.specs)) if args.feature
+                  else graph.MainGraph((args.specs or Path("specs")).resolve()))
+        graph.main(source, args.port, args.open, args.json)
     else:
         folder = find_feature(args.feature, args.specs)
         if not (folder / "spec.md").is_file():
