@@ -69,11 +69,14 @@ h1 { font-size: 15px; margin: 0; font-weight: 600; }
 .toggle.back { border-color: var(--axis); }
 .muted { color: var(--text-muted); }
 .secondary { color: var(--text-secondary); }
-.tabs { display: flex; gap: 4px; justify-content: center; margin: 0 0 12px; }
+/* переключатель вида: сегменты в общей рамке, своя полоса с чертой снизу */
+.view-bar { position: relative; display: flex; justify-content: center; padding-bottom: 12px; margin: 0 0 16px; border-bottom: 1px solid var(--hairline); }
+.tabs { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--axis); border-radius: 8px; background: var(--surface-1); }
+.tabs button { min-width: 96px; }
 .tabs button, .toggle { font: inherit; color: var(--text-secondary); background: none; border: 1px solid transparent;
   border-radius: 6px; padding: 4px 10px; cursor: pointer; }
 .tabs button:hover { background: var(--wash); }
-.tabs button[aria-selected="true"] { color: var(--text-primary); border-color: var(--axis); background: var(--surface-1); }
+.tabs button[aria-selected="true"] { color: var(--text-primary); background: var(--wash); font-weight: 600; }
 .column h3 .toggle { font-size: 11px; padding: 1px 6px; margin-left: 6px; border-color: var(--hairline); }
 .column h3 .toggle.on { color: var(--text-primary); border-color: var(--axis); background: var(--wash); }
 .live { margin-left: auto; color: var(--text-muted); }
@@ -119,14 +122,19 @@ aside { border-left: 1px solid var(--hairline); background: var(--surface-1); pa
 .line.later { border-top: 1px solid var(--hairline); margin-top: 3px; padding-top: 3px; }
 .line.later.removed { color: var(--op-del); }
 .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; vertical-align: 0; }
-.doc-legend { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 11px; color: var(--text-secondary); margin: -4px 0 8px; }
 
 /* вкладка 2 — граф */
-details.legend-list { margin: 0 0 12px; color: var(--text-secondary); font-size: 12px; }
-details.legend-list summary { cursor: pointer; }
-details.legend-list ul { list-style: none; padding-left: 4px; margin: 6px 0 0; }
-details.legend-list li { display: flex; gap: 8px; align-items: center; margin: 3px 0; }
-details.legend-list svg { flex: none; }
+/* «Обозначения»: кнопка справа в полосе переключателя, панель поверх графа */
+.legend-btn { position: absolute; right: 0; top: 0; border-color: var(--axis); }
+.legend-btn.on { color: var(--text-primary); background: var(--wash); }
+.legend-pop { position: absolute; right: 0; top: 36px; z-index: 5; width: 440px; max-height: 70vh; overflow: auto;
+  background: var(--surface-1); border: 1px solid var(--axis); border-radius: 8px; padding: 10px 14px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .12); color: var(--text-secondary); font-size: 12px; }
+.legend-pop h4 { margin: 8px 0 4px; font-size: 12px; color: var(--text-primary); }
+.legend-pop h4:first-child { margin-top: 0; }
+.legend-pop ul { list-style: none; padding-left: 0; margin: 0; }
+.legend-pop li { display: flex; gap: 8px; align-items: center; margin: 3px 0; }
+.legend-pop svg { flex: none; }
 .sample-node { display: inline-block; width: 22px; height: 12px; border-radius: 3px; flex: none; }
 .graph { position: relative; display: grid; gap: 72px; align-items: start; padding-right: 48px; }
 .graph svg.edges { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; z-index: 0; }
@@ -135,6 +143,11 @@ details.legend-list svg { flex: none; }
   padding-bottom: 6px; border-bottom: 1px solid var(--hairline); }
 .group { margin-bottom: 14px; }
 .group-name { font-size: 11px; color: var(--text-muted); margin: 6px 0 2px; }
+.filter { width: 100%; font: inherit; font-size: 12px; color: var(--text-primary); background: var(--surface-1);
+  border: 1px solid var(--hairline); border-radius: 6px; padding: 4px 8px; margin: 0 0 8px; }
+.group-toggle { display: block; width: 100%; text-align: left; font: inherit; font-size: 11px; color: var(--text-muted);
+  background: none; border: 0; padding: 2px 0; cursor: pointer; }
+.group-toggle:hover { color: var(--text-primary); }
 .column[data-col="plan"] .group[data-group="Задачи"] { border-top: 1px solid var(--axis); padding-top: 8px; margin-top: 4px; }
 .edge { fill: none; stroke-width: 1.5; opacity: .85; transition: opacity .15s; }
 .edge.emph { stroke-width: 2.6; opacity: 1; }
@@ -198,13 +211,13 @@ const KINDS = { requirements: "требование", "domain-docs": "докум
 const COLUMNS = [["features", "Фичи"], ["plan", "Спека и задачи plan"], ["req", "Требования"], ["contracts", "Контракты"], ["docs", "Документация и проект"]];
 const EDGE_KINDS = { adds: "добавит", changes: "меняет", removes: "удалит", will_replace: "заменит", owns: "владелец",
   changed: "меняла раньше", removed: "удалила", gone: "меняла, позже удалён", replaced: "заменила", based: "опирается на",
-  implements: "реализует", documents: "документация", contract: "виден через контракт", explains: "объясняет",
+  implements: "реализует", documents: "документация", contract: "выводит элемент", explains: "объясняет",
   uses: "использует модель", adr: "держится на ADR", replaces: "заменяет" };
 // Связь глазами второго конца: для панели.
 const EDGE_BACK = { adds: "добавит фича в работе", changes: "меняет фича в работе", removes: "удалит фича в работе",
   will_replace: "заменит фича в работе", owns: "владелец — фича", changed: "меняла раньше фича", removed: "удалён фичей",
   gone: "меняла фича", replaced: "заменён фичей", based: "основа для", implements: "реализует задача",
-  documents: "описывает задачу", contract: "виден в сценариях требования", explains: "объяснён в документации",
+  documents: "описывает задачу", contract: "выведен из требования", explains: "объяснён в документации",
   uses: "модель для", adr: "на нём держится", replaces: "заменён" };
 
 // Стили стрелок — одна таблица на оба режима. Цвет — переменная из CSS, dash — пунктир.
@@ -218,7 +231,7 @@ const STYLE = {
 // Закрытая фича: владелец — серый, меняла раньше — серый пунктир, блок удалён из main — красный пунктир.
 const MAIN_STYLE = { adds: "add", changes: "mod", removes: "del", will_replace: "del", owns: "own", changed: "was",
   removed: "gone", gone: "gone", replaced: "gone" };
-// Режим фичи: стиль — по операции изменённого конца связи.
+// Режим фичи: стиль — по операции блока, на который указывает стрелка.
 const ACTION_STYLE = { ADDED: "add", MODIFIED: "mod", REMOVED: "del" };
 
 let graph = null, version = null, page = null, hovered = null, panelTab = "spec";
@@ -232,7 +245,10 @@ let selected = hashId.length ? decodeURIComponent(hashId.join("/")) : null;
 // Фича, открытая в общем режиме: граф её изменений. `graph <фича>` открывает страницу сразу на ней: `/?feature=<ID>`.
 let focusFeature = new URLSearchParams(location.search).get("feature");
 let pickSpec = !!focusFeature && !selected;  // при входе в режим фичи выбрать спеку, когда придёт граф
-let showLegend = localStorage.getItem("sdd-legend") === "1";  // подписи цветов кружков в шапке столбцов
+// Свёрнутые группы: «<столбец>:<группа>» — «features:archive», «req:auth», «docs:_project».
+const collapsed = new Set(JSON.parse(localStorage.getItem("sdd-collapsed") || "[]"));
+let featureFilter = "";  // строка фильтра под заголовком «Фичи»: часть ID или названия
+let legendOpen = false;  // всплывающая панель «Обозначения»
 const query = () => focusFeature ? "?feature=" + encodeURIComponent(focusFeature) : "";
 let featureInfo = null;  // узел фичи из общего графа: «Нет в main» для панели спеки в режиме фичи
 
@@ -365,64 +381,78 @@ function layout() {
 const sampleLine = style => `<svg width="28" height="10" aria-hidden="true"><path d="M1,5 L27,5" stroke="var(${STYLE[style].color})" stroke-width="2"${STYLE[style].dash ? ' stroke-dasharray="4 3"' : ""}/></svg>`;
 const sampleNode = (border, dashed) => `<i class="sample-node" style="border:1.5px ${dashed ? "dashed" : "solid"} var(${border})"></i>`;
 
+// «Обозначения»: стрелки и карточки текущего режима, как пользоваться. Цвета кружков не нужны: тип подписан на карточке.
 function legendHtml() {
-  const items = isMain() ? [
+  const arrows = isMain() ? [
     [sampleLine("add"), "фича в работе добавит блок"],
     [sampleLine("mod"), "фича в работе изменит блок"],
     [sampleLine("del"), "фича в работе удалит или заменит блок"],
-    [sampleLine("gone"), "закрытая фича удалила или заменила блок, его в main уже нет"],
     [sampleLine("own"), "закрытая фича — владелец: её версия в main (`Источник:`)"],
     [sampleLine("was"), "закрытая фича меняла блок раньше, сейчас там версия другой фичи"],
-    [sampleLine("own"), "связи блоков и фич: сценарий → элемент, элемент → модель, документация → элемент, блок → ADR, фича → основа"],
-    [sampleNode("--op-add", false), "блок, который фича в работе добавит. Виден, пока фича под курсором"],
-    [sampleNode("--op-del", false), "блок, который фича в работе удалит"],
-    [sampleNode("--op-del", true), "блок, который удалён из main. Виден вместе с фичей, которая его касалась"],
+    [sampleLine("gone"), "закрытая фича удалила или заменила блок, его в main уже нет"],
+    [sampleLine("own"), "связи блоков и фич: требование выводит элемент, элемент → модель, документация → элемент, блок → ADR, фича → основа"],
   ] : [
     [sampleLine("add"), "добавление"],
     [sampleLine("mod"), "модификация"],
-    [sampleLine("del"), "удаление"],
-    [sampleLine("context"), "связь с блоком main без изменений"],
-    [sampleNode("--axis", false), "блок main без изменений, связанный с изменениями: без цветной полосы"],
-    [sampleNode("--hairline", false), "закрытая фича: нижняя строка карточки — что с частью в текущем main. Красным — удалена или заменена"],
+    [sampleLine("del"), "удаление, а у «заменяет» — заменяемый ADR"],
+    [sampleLine("context"), "к блоку без изменений"],
+  ];
+  const cards = isMain() ? [
+    [sampleNode("--op-add", false), "блок, который фича в работе добавит. Виден, пока фича под курсором"],
+    [sampleNode("--op-del", false), "блок, который фича в работе удалит"],
+    [sampleNode("--op-del", true), "блок, удалённый из main. Виден вместе с фичей, которая его касалась"],
+  ] : [
+    [sampleNode("--axis", false), "блок main без изменений: без цветной полосы"],
+    [sampleNode("--hairline", false), "закрытая фича: нижняя строка — что с частью в текущем main. Красным — удалена или заменена"],
   ];
   const hint = isMain()
-    ? "Наведение показывает связи узла и поднимает связанное наверх столбцов. Нажатие на фичу открывает её изменения. Нажатие на блок оставляет только его и связанное с ним, повторное — снимает выбор."
-    : "Нажатие на спеку рисует стрелки всей фичи, на задачу — путь её изменений, повторное — снимает. Остальные карточки открываются в панели, выбор спеки или задачи остаётся. Цвет стрелки — операция изменённого блока на её конце.";
-  return `<details class="legend-list"${localStorage.getItem("sdd-legend-open") === "1" ? " open" : ""}><summary>Обозначения</summary>`
-    + `<ul>${items.map(([sample, text]) => `<li>${sample}<span>${esc(text)}</span></li>`).join("")}<li><span class="muted">${esc(hint)}</span></li></ul></details>`;
+    ? ["Наведение показывает связи узла и поднимает связанное наверх столбцов.", "Нажатие на фичу открывает её изменения.",
+       "Нажатие на блок оставляет только его и связанное с ним, повторное — снимает выбор. Esc — тоже."]
+    : ["Нажатие на спеку рисует стрелки всей фичи, на задачу — путь её изменений, повторное — снимает.",
+       "Остальные карточки открываются в панели, выбор спеки или задачи остаётся.",
+       "Цвет стрелки — операция блока, на который она указывает."];
+  const section = (title, rows) => `<h4>${title}</h4><ul>${rows.map(([sample, text]) => `<li>${sample}<span>${esc(text)}</span></li>`).join("")}</ul>`;
+  return `<div class="legend-pop" id="legend-pop"${legendOpen ? "" : " hidden"}>`
+    + section("Стрелки", arrows) + section("Карточки", cards)
+    + `<h4>Как пользоваться</h4><ul>${hint.map(h => `<li><span>${esc(h)}</span></li>`).join("")}</ul></div>`;
 }
 
 function renderGraph() {
   const { focus, shown: isShown, top } = layout();
   const feature = isMain() && byId()[focus]?.kind === "feature" ? focus : null;
   removing = new Set(feature ? graph.edges.filter(e => e.from === feature && ["removes", "will_replace"].includes(e.kind)).map(e => e.to) : []);
-  const nodes = graph.nodes.filter(isShown);
+  const needle = featureFilter.trim().toLowerCase();
+  const nodes = graph.nodes.filter(n => isShown(n) && (n.kind !== "feature" || !needle || n.label.toLowerCase().includes(needle)));
   const shown = COLUMNS.filter(([key]) => isMain() ? key !== "plan" : key !== "features");
   const cols = shown.map(([key, title]) => {
     const groups = new Map();
     const lifted = nodes.filter(n => n.column === key && top.has(n.id));
     if (lifted.length) groups.set("\u0000top", lifted);  // связанное с наведённым — первой группой
     for (const n of nodes.filter(n => n.column === key && !top.has(n.id))) (groups.get(n.group) || groups.set(n.group, []).get(n.group)).push(n);
-    const body = [...groups].map(([g, ns]) => {
+    let body = [...groups].map(([g, ns]) => {
       const name = g === "\u0000top" ? "связано с " + (byId()[focus]?.label || "") : groupName(key, g);
+      if (name && key !== "plan" && g !== "\u0000top") {
+        // Группа сворачивается: заголовок — кнопка с числом карточек.
+        const id = `${key}:${g}`, shut = collapsed.has(id);
+        return `<div class="group" data-group="${esc(g)}"><button class="group-name group-toggle" data-collapse="${esc(id)}" aria-expanded="${!shut}">`
+          + `${shut ? "▸" : "▾"} ${esc(name)} · ${ns.length}</button>${shut ? "" : ns.map(nodeHtml).join("")}</div>`;
+      }
       return `<div class="group" data-group="${esc(g)}">${name ? `<div class="group-name">${esc(name)}</div>` : ""}${ns.map(nodeHtml).join("")}</div>`;
     }).join("") || `<p class="muted">—</p>`;
-    const colors = { docs: Object.entries(DOC_DOTS).map(([k, c]) => [KINDS[k], c]), contracts: Object.entries(TYPE_DOTS) }[key];
-    const legendButton = colors
-      ? ` <button class="toggle${showLegend ? " on" : ""}" data-legend title="Показать, что значат цвета кружков">цвета</button>` : "";
-    const legend = colors && showLegend
-      ? `<div class="doc-legend">${colors.map(([name, c]) => `<span>${dot(c)}${esc(name)}</span>`).join("")}</div>` : "";
-    return `<section class="column" data-col="${key}"><h3>${title}${legendButton}</h3>${legend}${body}</section>`;
+    const filter = key === "features"
+      ? `<input id="feature-filter" class="filter" type="search" placeholder="фильтр по фиче" value="${esc(featureFilter)}" autocomplete="off">` : "";
+    return `<section class="column" data-col="${key}"><h3>${title}</h3>${filter}${body}</section>`;
   }).join("");
   const markers = Object.entries(STYLE).map(([k, s]) => `<marker id="arrow-${k}" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="4.5" markerHeight="4.5" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="var(${s.color})"/></marker>`).join("");
-  return legendHtml()
-    + `<div class="graph" id="graph" style="grid-template-columns: repeat(${shown.length}, minmax(180px, 1fr))"><svg class="edges" aria-hidden="true"><defs>${markers}</defs></svg>${cols}</div>`;
+  return `<div class="graph" id="graph" style="grid-template-columns: repeat(${shown.length}, minmax(180px, 1fr))"><svg class="edges" aria-hidden="true"><defs>${markers}</defs></svg>${cols}</div>`;
 }
 
 function edgeStyle(e, nodes) {
   if (isMain()) return MAIN_STYLE[e.kind] || "own";
-  const action = nodes[e.to]?.action || nodes[e.from]?.action;
-  return ACTION_STYLE[action] || "context";
+  // Цвет — по блоку, на который указывает стрелка. Он не меняется — серая.
+  // Заменяемый ADR в delta не входит, но фича его удаляет — красная, как «заменит» в общем режиме.
+  if (e.kind === "replaces") return "del";
+  return ACTION_STYLE[nodes[e.to]?.action] || "context";
 }
 
 // Стрелки фокуса. Общий режим — связи узла в фокусе. Режим фичи — путь выбранной задачи, без задачи стрелок нет.
@@ -608,7 +638,7 @@ function render() {
   $("#back-main").hidden = !focusFeature;
   document.title = `SDD: ${f.slug}`;
   if (selected && !byId()[selected]) selected = null;
-  $("#view").innerHTML = tabsHtml() + (view === "graph" ? renderGraph() : renderChanges());
+  keepFilterFocus(() => { $("#view").innerHTML = tabsHtml() + (view === "graph" ? renderGraph() : renderChanges()); });
   history.replaceState(null, "", location.pathname + query() + "#" + view + (selected ? "/" + encodeURIComponent(selected) : ""));
   renderDetail();
   $(".viz-root").classList.toggle("wide", widePanel);
@@ -618,15 +648,24 @@ function render() {
 // Переключатель вида: по центру над графом и «Обозначениями».
 function tabsHtml() {
   const tabs = [["changes", isMain() ? "Домены" : "Изменения"], ["graph", "Связи"]];
-  return `<nav class="tabs" role="tablist">${tabs.map(([k, title]) =>
-    `<button role="tab" data-view="${k}" aria-selected="${k === view}">${title}</button>`).join("")}</nav>`;
+  return `<div class="view-bar"><nav class="tabs" role="tablist">${tabs.map(([k, title]) =>
+    `<button role="tab" data-view="${k}" aria-selected="${k === view}">${title}</button>`).join("")}</nav>`
+    + `<button class="toggle legend-btn${legendOpen ? " on" : ""}" id="legend-btn" aria-expanded="${legendOpen}">Обозначения</button>${legendHtml()}</div>`;
 }
 
 // Перерисовать только граф: при наведении панель не меняется.
 function renderGraphOnly() {
   if (view !== "graph" || !graph) return;
-  $("#view").innerHTML = tabsHtml() + renderGraph();
+  keepFilterFocus(() => { $("#view").innerHTML = tabsHtml() + renderGraph(); });
   requestAnimationFrame(drawEdges);
+}
+
+// Перерисовка заменяет поле фильтра: вернуть ему фокус и курсор.
+function keepFilterFocus(redraw) {
+  const input = document.activeElement?.id === "feature-filter" ? document.activeElement : null;
+  const at = input?.selectionStart;
+  redraw();
+  if (input) { const next = $("#feature-filter"); next?.focus(); next?.setSelectionRange(at, at); }
 }
 
 // Открыть граф изменений фичи или вернуться к общему режиму: сразу перечитать граф.
@@ -675,10 +714,17 @@ async function refresh() {
 }
 
 document.addEventListener("click", ev => {
-  if (ev.target.closest("[data-legend]")) {
-    showLegend = !showLegend; localStorage.setItem("sdd-legend", showLegend ? "1" : "0"); render(); return;
-  }
+  if (ev.target.closest("#legend-btn")) { setLegend(!legendOpen); return; }
+  if (legendOpen && !ev.target.closest("#legend-pop")) setLegend(false);  // клик мимо панели закрывает её
   if (ev.target.closest("#back-main")) { openFeature(null); return; }
+  const fold = ev.target.closest("[data-collapse]");
+  if (fold) {
+    const g = fold.dataset.collapse;
+    collapsed.has(g) ? collapsed.delete(g) : collapsed.add(g);
+    localStorage.setItem("sdd-collapsed", JSON.stringify([...collapsed]));
+    renderGraphOnly();
+    return;
+  }
   const ptab = ev.target.closest("[data-ptab]");
   if (ptab) { panelTab = ptab.dataset.ptab; renderDetail(); return; }
   const tab = ev.target.closest(".tabs button");
@@ -705,10 +751,20 @@ document.addEventListener("click", ev => {
     pathTask = null; select(null);
   }
 });
+document.addEventListener("input", ev => {
+  if (ev.target.id !== "feature-filter") return;
+  featureFilter = ev.target.value;
+  renderGraphOnly();
+});
+document.addEventListener("keydown", ev => { if (ev.key === "Escape" && legendOpen) setLegend(false); });
 document.addEventListener("keydown", ev => { if (ev.key === "Escape" && (selected || pathTask)) { pathTask = null; select(null); } });
-document.addEventListener("toggle", ev => {
-  if (ev.target.matches?.("details.legend-list")) localStorage.setItem("sdd-legend-open", ev.target.open ? "1" : "0");
-}, true);
+// Показать или скрыть «Обозначения» без перерисовки графа.
+function setLegend(open) {
+  legendOpen = open;
+  $("#legend-pop")?.toggleAttribute("hidden", !open);
+  $("#legend-btn")?.classList.toggle("on", open);
+  $("#legend-btn")?.setAttribute("aria-expanded", open);
+}
 for (const type of ["mouseover", "focusin"]) document.addEventListener(type, ev => {
   const n = ev.target.closest?.("#graph .node");
   const id = n ? n.dataset.id : null;
