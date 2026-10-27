@@ -64,7 +64,8 @@ def main() -> None:
     out += check(f"{feature}/plan.md", examples("plan.md")[0])
     out += check("main/auth/login-requirements.md", examples("requirements.md")[0])
     for text in examples("contracts.md"):
-        out += check(f"main/_contracts/{re.match(r'^# (\S+): контракт', text).group(1)}.md", text)
+        iface = re.match(r"^# (\S+): контракт", text).group(1)
+        out += check(f"main/_contracts/{iface}.md", text)
     out += check("main/auth/login.md", examples("domain-docs.md")[0])
     architecture, conventions = examples("project.md")
     out += check("main/_project/architecture.md", architecture)

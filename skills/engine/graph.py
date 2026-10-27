@@ -168,6 +168,9 @@ def build_graph(folder: Path) -> dict:
         owner = "spec" if c.entity in ("requirements", "contracts") else "plan"
         nodes[nid] = make_node(nid, c.entity, c.file, c.action, c.frag, c.clean, True,
                                source=c.source, reason=c.prop(REASON), owner=owner)
+        if c.action == REMOVED and c.entity == "contracts":
+            # В delta у REMOVED нет `Тип:` — берём из блока в main или из последней версии в delta других фич.
+            nodes[nid]["type"] = linked.prop("Тип") or removed_type(feature.specs, nid)
         edges.update(edges_of(nid, c.entity, c.name, linked))
 
     if folder.parent.name == "archive":
@@ -260,6 +263,16 @@ def mark_later(nodes: dict[str, dict], feature, current: Main, adrs: dict) -> No
             nodes[nid]["replaced_with"] = replaced.get(nid, (None, None))[1]
         elif owner and owner != feature.slug:
             nodes[nid]["later_changed"] = owner
+
+
+def removed_type(specs: Path, nid: str) -> str | None:
+    """`Тип:` удалённого элемента контракта: из последней части delta с ним, кроме REMOVED."""
+    found = None
+    for f in all_features(specs):
+        for c in f.changes:
+            if c.action != REMOVED and c.entity == "contracts" and node_id(c.entity, c.name, c.file) == nid:
+                found = c.prop("Тип") or found
+    return found
 
 
 def all_features(specs: Path) -> list:
