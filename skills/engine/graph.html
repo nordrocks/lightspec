@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8">
-<title>SDD: граф изменений</title>
+<title>SDD: граф</title>
 <style>
 .viz-root {
   color-scheme: light;
@@ -15,9 +15,11 @@
   --axis: #c3c2b7;
   --ring: rgba(11, 11, 11, 0.10);
   --wash: rgba(11, 11, 11, 0.04);
-  --added: #1baf7a;     /* slot 3, aqua */
-  --modified: #2a78d6;  /* slot 1, blue */
-  --removed: #eb6834;   /* slot 2, orange */
+  /* Одна таблица цветов для обоих режимов: полосы карточек, рамки, стрелки, легенда. */
+  --op-add: #1baf7a;    /* добавление */
+  --op-mod: #2a78d6;    /* модификация */
+  --op-del: #d03b3b;    /* удаление: пунктир */
+  --op-none: #898781;   /* без изменений, история и обычные связи */
   --critical: #d03b3b;
   /* метки типов документации: свободные категориальные цвета, не занятые изменениями */
   --doc-domain: #898781;        /* документация поддомена — нейтральный */
@@ -36,7 +38,7 @@
     color-scheme: dark;
     --page: #0d0d0d; --surface-1: #1a1a19; --text-primary: #f0efec; --text-secondary: #c3c2b7;
     --hairline: #2c2c2a; --axis: #383835; --ring: rgba(255, 255, 255, 0.10); --wash: rgba(255, 255, 255, 0.05);
-    --added: #199e70; --modified: #3987e5; --removed: #d95926;
+    --op-add: #199e70; --op-mod: #3987e5;
     --doc-architecture: #9085e9; --doc-conventions: #d55181; --doc-adr: #c98500;
     --type-operation: #9085e9; --type-event: #c98500; --type-protocol: #d55181;
   }
@@ -45,7 +47,7 @@
   color-scheme: dark;
   --page: #0d0d0d; --surface-1: #1a1a19; --text-primary: #f0efec; --text-secondary: #c3c2b7;
   --hairline: #2c2c2a; --axis: #383835; --ring: rgba(255, 255, 255, 0.10); --wash: rgba(255, 255, 255, 0.05);
-  --added: #199e70; --modified: #3987e5; --removed: #d95926;
+  --op-add: #199e70; --op-mod: #3987e5;
   --doc-architecture: #9085e9; --doc-conventions: #d55181; --doc-adr: #c98500;
   --type-operation: #9085e9; --type-event: #c98500; --type-protocol: #d55181;
 }
@@ -56,25 +58,24 @@ body { margin: 0; }
 .viz-root {
   font: 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
   color: var(--text-primary); background: var(--page); min-height: 100vh;
-  display: grid; grid-template-columns: 1fr 380px; grid-template-rows: auto 1fr;
+  display: grid; grid-template-columns: 1fr 400px; grid-template-rows: auto 1fr;
 }
 header { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: center;
   padding: 12px 20px; border-bottom: 1px solid var(--hairline); background: var(--surface-1); }
 h1 { font-size: 15px; margin: 0; font-weight: 600; }
+.heading { display: flex; flex-direction: column; gap: 2px; }
+#status { font-size: 12px; }
+#status:empty { display: none; }
+.toggle.back { border-color: var(--axis); }
 .muted { color: var(--text-muted); }
 .secondary { color: var(--text-secondary); }
-.tabs { display: flex; gap: 4px; }
+.tabs { display: flex; gap: 4px; justify-content: center; margin: 0 0 12px; }
 .tabs button, .toggle { font: inherit; color: var(--text-secondary); background: none; border: 1px solid transparent;
   border-radius: 6px; padding: 4px 10px; cursor: pointer; }
 .tabs button:hover { background: var(--wash); }
+.tabs button[aria-selected="true"] { color: var(--text-primary); border-color: var(--axis); background: var(--surface-1); }
 .column h3 .toggle { font-size: 11px; padding: 1px 6px; margin-left: 6px; border-color: var(--hairline); }
 .column h3 .toggle.on { color: var(--text-primary); border-color: var(--axis); background: var(--wash); }
-.tabs button[aria-selected="true"] { color: var(--text-primary); border-color: var(--axis); background: var(--surface-1); }
-.legend { display: flex; gap: 14px; align-items: center; color: var(--text-secondary); }
-.legend span { display: inline-flex; gap: 6px; align-items: center; }
-.swatch { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
-.swatch.context { border: 1px dashed var(--text-muted); }
-.line-sample { width: 22px; border-top: 1.5px dashed var(--text-muted); display: inline-block; }
 .live { margin-left: auto; color: var(--text-muted); }
 .live.down { color: var(--critical); }
 .banner { grid-column: 1 / -1; margin: 12px 20px 0; padding: 8px 12px; border-radius: 6px;
@@ -84,63 +85,66 @@ main.stale { opacity: .55; }
 aside { border-left: 1px solid var(--hairline); background: var(--surface-1); padding: 16px 18px;
   overflow: auto; max-height: calc(100vh - 54px); position: sticky; top: 0; }
 
-.ADDED { --mark: var(--added); }
-.MODIFIED { --mark: var(--modified); }
-.REMOVED { --mark: var(--removed); }
+.ADDED { --mark: var(--op-add); }
+.MODIFIED { --mark: var(--op-mod); }
+.REMOVED { --mark: var(--op-del); }
 
-/* шаг 1 — домены */
+/* вкладка 1 — домены */
 .domains { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; align-items: start; }
 .card { background: var(--surface-1); border: 1px solid var(--ring); border-radius: 8px; padding: 12px 14px; }
 .card h2 { font-size: 14px; margin: 0 0 2px; font-weight: 600; }
 .counts { color: var(--text-secondary); margin-bottom: 8px; font-variant-numeric: tabular-nums; }
 .kind { margin: 10px 0 4px; color: var(--text-muted); font-size: 12px; }
 
-/* узел */
+/* карточка узла: заголовок, тип, операция — по строке */
 .node { display: flex; gap: 8px; align-items: flex-start; width: 100%; text-align: left; font: inherit;
   color: var(--text-primary); background: var(--surface-1); border: 1px solid var(--ring); border-radius: 6px;
   padding: 6px 8px 6px 6px; margin: 4px 0; cursor: pointer; position: relative; }
 .node::before { content: ""; flex: none; width: 4px; align-self: stretch; border-radius: 2px; background: var(--mark, transparent); }
-.node:hover, .node:focus-visible { background: var(--wash); outline: none; }
+.node:hover, .node:focus-visible { background: linear-gradient(var(--wash), var(--wash)), var(--surface-1); outline: none; }
 .node.selected { box-shadow: 0 0 0 2px var(--text-primary); }
-.node.context { border-style: dashed; border-color: var(--axis); color: var(--text-secondary); }
+.node.active { box-shadow: 0 0 0 2px var(--text-primary); }  /* режим фичи: спека или задача, чьи стрелки нарисованы */
+.node.selected:not(.active) { box-shadow: 0 0 0 1.5px var(--axis); }
+.node.context { border-color: var(--axis); color: var(--text-secondary); }
 .node.context::before { display: none; }
 .node.missing .label { font-style: italic; }
-.node.REMOVED .label { text-decoration: line-through; text-decoration-color: var(--text-muted); }
-.node .body { min-width: 0; overflow-wrap: anywhere; }
-.badge { display: inline-block; font-size: 11px; color: var(--text-secondary); white-space: normal; overflow-wrap: anywhere; }
-.badge b { font-weight: 700; }
-.sub { font-size: 11px; color: var(--text-muted); }
+.node.REMOVED .label, .node.gone .label { text-decoration: line-through; text-decoration-color: var(--op-del); }
+.node.gone { border: 1.5px dashed var(--op-del); }  /* пунктир — только удалённое из main */
+.node.will-remove { border: 1.5px solid var(--op-del); }
+.node.pending { border: 1.5px solid var(--op-add); }
+.node .body { min-width: 0; overflow-wrap: anywhere; display: flex; flex-direction: column; gap: 1px; }
+.line { font-size: 11px; color: var(--text-muted); }
+.line.op { color: var(--text-secondary); }
+.line b { font-weight: 700; }
+.line.later { border-top: 1px solid var(--hairline); margin-top: 3px; padding-top: 3px; }
+.line.later.removed { color: var(--op-del); }
 .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; vertical-align: 0; }
 .doc-legend { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 11px; color: var(--text-secondary); margin: -4px 0 8px; }
-.doc-legend .dot { margin: 0 4px 0 0; }
 
-/* шаг 2 — граф */
-.toolbar { display: flex; gap: 16px; align-items: center; margin-bottom: 12px; color: var(--text-secondary); }
-.graph { position: relative; display: grid; grid-template-columns: repeat(4, minmax(180px, 1fr)); gap: 72px; align-items: start; padding-right: 48px; }
-.graph svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; z-index: 0; }
+/* вкладка 2 — граф */
+details.legend-list { margin: 0 0 12px; color: var(--text-secondary); font-size: 12px; }
+details.legend-list summary { cursor: pointer; }
+details.legend-list ul { list-style: none; padding-left: 4px; margin: 6px 0 0; }
+details.legend-list li { display: flex; gap: 8px; align-items: center; margin: 3px 0; }
+details.legend-list svg { flex: none; }
+.sample-node { display: inline-block; width: 22px; height: 12px; border-radius: 3px; flex: none; }
+.graph { position: relative; display: grid; gap: 72px; align-items: start; padding-right: 48px; }
+.graph svg.edges { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; z-index: 0; }
 .column { position: relative; z-index: 1; }
 .column h3 { font-size: 12px; font-weight: 600; color: var(--text-secondary); margin: 0 0 8px;
   padding-bottom: 6px; border-bottom: 1px solid var(--hairline); }
 .group { margin-bottom: 14px; }
 .group-name { font-size: 11px; color: var(--text-muted); margin: 6px 0 2px; }
-.edge { fill: none; stroke: var(--text-muted); stroke-width: 1.5; opacity: .7; transition: opacity .15s; }
-.edge.removed { stroke-dasharray: 4 4; }
-.graph.focus .edge { opacity: .12; }
-.graph.focus .edge.lit { opacity: 1; stroke: var(--text-primary); stroke-width: 2; }
-/* фичи в работе — синим, удалённые блоки — красным пунктиром */
-.edge.kind-changes, .edge.kind-removes, .edge.kind-will_replace,
-.graph.focus .edge.lit.kind-changes, .graph.focus .edge.lit.kind-removes, .graph.focus .edge.lit.kind-will_replace { stroke: var(--modified); }
-.edge.kind-removed, .edge.kind-gone, .edge.kind-replaced,
-.graph.focus .edge.lit.kind-removed, .graph.focus .edge.lit.kind-gone, .graph.focus .edge.lit.kind-replaced { stroke: var(--critical); stroke-dasharray: 4 4; }
-.node.gone { border: 1.5px solid var(--critical); }
-.node.gone .label { text-decoration: line-through; text-decoration-color: var(--critical); }
-#arrow-blue path { fill: var(--modified); }
-#arrow-red path { fill: var(--critical); }
-.graph.focus .node:not(.lit) > .body, .graph.focus .node:not(.lit)::before { opacity: .35; }
-marker path { fill: var(--text-muted); }
+.column[data-col="plan"] .group[data-group="Задачи"] { border-top: 1px solid var(--axis); padding-top: 8px; margin-top: 4px; }
+.edge { fill: none; stroke-width: 1.5; opacity: .85; transition: opacity .15s; }
+.edge.emph { stroke-width: 2.6; opacity: 1; }
+.edge.dim { opacity: .25; }
 
-/* текст части: markdown */
-.md { font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+/* текст: markdown — отдельным блоком */
+.md { font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; background: var(--page); border: 1px solid var(--hairline);
+  border-radius: 6px; padding: 8px 12px; margin: 6px 0 10px; }
+.md > :first-child { margin-top: 0; }
+.md > :last-child { margin-bottom: 0; }
 .md h4, .md h5, .md h6 { margin: 12px 0 4px; font-size: 13px; font-weight: 600; }
 .md h4 { font-size: 14px; }
 .md p { margin: 6px 0; }
@@ -161,10 +165,16 @@ aside h2 { font-size: 14px; margin: 0 0 6px; overflow-wrap: anywhere; }
 aside dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; margin: 10px 0; }
 aside dt { color: var(--text-muted); }
 aside dd { margin: 0; overflow-wrap: anywhere; }
-aside pre { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--page); border: 1px solid var(--hairline);
+aside pre { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--surface-1); border: 1px solid var(--hairline);
   border-radius: 6px; padding: 8px 10px; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
 aside h3 { font-size: 12px; color: var(--text-secondary); margin: 14px 0 4px; font-weight: 600; }
 aside ul { margin: 0; padding-left: 18px; }
+.viz-root.wide { grid-template-columns: 1fr 680px; }
+.wide-btn { float: right; font-size: 11px; padding: 1px 8px; border-color: var(--hairline); }
+.ptabs { display: flex; gap: 4px; margin: 14px 0 0; border-bottom: 1px solid var(--hairline); }
+.ptabs button { font: inherit; font-size: 12px; color: var(--text-secondary); background: none; border: 1px solid transparent;
+  border-bottom: 0; border-radius: 6px 6px 0 0; padding: 4px 10px; cursor: pointer; }
+.ptabs button[aria-selected="true"] { color: var(--text-primary); border-color: var(--hairline); background: var(--page); }
 .link { font: inherit; color: var(--text-primary); background: none; border: 0; padding: 0; cursor: pointer;
   text-decoration: underline; text-decoration-color: var(--axis); text-align: left; }
 </style>
@@ -172,53 +182,84 @@ aside ul { margin: 0; padding-left: 18px; }
 <body>
 <div class="viz-root">
   <header>
-    <h1 id="title">SDD: граф изменений</h1>
-    <span id="status" class="secondary"></span>
-    <nav class="tabs" role="tablist">
-      <button role="tab" data-view="changes">1. Изменения</button>
-      <button role="tab" data-view="graph">2. Связи</button>
-    </nav>
-    <div class="legend" aria-label="Легенда">
-      <span><i class="swatch" style="background:var(--added)"></i><b>+</b> ADDED</span>
-      <span><i class="swatch" style="background:var(--modified)"></i><b>~</b> MODIFIED</span>
-      <span><i class="swatch" style="background:var(--removed)"></i><b>−</b> REMOVED</span>
-      <span><i class="swatch context"></i>не меняется</span>
-      <span><i class="line-sample"></i>связь удаляемого блока</span>
-    </div>
+    <button class="toggle back" id="back-main" hidden>← весь main</button>
+    <div class="heading"><h1 id="title">SDD: граф</h1><div id="status" class="secondary"></div></div>
     <span id="live" class="live">подключение…</span>
   </header>
   <div id="banner" class="banner" hidden></div>
   <main id="view"></main>
-  <aside id="detail"><p class="muted">Выбери блок, задачу или элемент — здесь будут его свойства, текст и связи.</p></aside>
+  <aside id="detail"><p class="muted">Выбери фичу, задачу или блок — здесь будут его свойства, связи и текст.</p></aside>
 </div>
 <script>
 const SIGN = { ADDED: "+", MODIFIED: "~", REMOVED: "−" };
-const KINDS = { requirements: "требования", "domain-docs": "документация поддомена", contracts: "контракт",
+const KINDS = { requirements: "требование", "domain-docs": "документация поддомена", contracts: "контракт",
   architecture: "архитектура", conventions: "конвенции", "project-doc": "документ проекта", adr: "ADR", task: "задача plan",
-  feature: "фича" };
-const COLUMNS = [["features", "Фичи"], ["plan", "Задачи plan"], ["req", "Требования"], ["contracts", "Контракты"], ["docs", "Документация и проект"]];
-const EDGE_KINDS = { replaced: "заменила", will_replace: "заменит", removes: "удалит", removed: "удалила", gone: "меняла, позже удалён", changes: "меняет", owns: "владелец", changed: "меняла раньше", based: "опирается на", implements: "реализует", documents: "документация", contract: "виден через контракт",
-  explains: "объясняет", uses: "использует модель", adr: "держится на ADR", replaces: "заменяет" };
-// Связь глазами второго конца: для панели деталей.
-const EDGE_BACK = { replaced: "заменён фичей", will_replace: "заменит фича в работе", removes: "удалит фича в работе", removed: "удалён фичей", gone: "меняла фича", changes: "меняет фича в работе", owns: "владелец — фича", changed: "меняла раньше фича", based: "основа для", implements: "реализует задача", documents: "описывает задачу", contract: "виден в сценариях требования", explains: "объяснён в документации",
+  feature: "фича", spec: "спека" };
+const COLUMNS = [["features", "Фичи"], ["plan", "Спека и задачи plan"], ["req", "Требования"], ["contracts", "Контракты"], ["docs", "Документация и проект"]];
+const EDGE_KINDS = { adds: "добавит", changes: "меняет", removes: "удалит", will_replace: "заменит", owns: "владелец",
+  changed: "меняла раньше", removed: "удалила", gone: "меняла, позже удалён", replaced: "заменила", based: "опирается на",
+  implements: "реализует", documents: "документация", contract: "виден через контракт", explains: "объясняет",
+  uses: "использует модель", adr: "держится на ADR", replaces: "заменяет" };
+// Связь глазами второго конца: для панели.
+const EDGE_BACK = { adds: "добавит фича в работе", changes: "меняет фича в работе", removes: "удалит фича в работе",
+  will_replace: "заменит фича в работе", owns: "владелец — фича", changed: "меняла раньше фича", removed: "удалён фичей",
+  gone: "меняла фича", replaced: "заменён фичей", based: "основа для", implements: "реализует задача",
+  documents: "описывает задачу", contract: "виден в сценариях требования", explains: "объяснён в документации",
   uses: "модель для", adr: "на нём держится", replaces: "заменён" };
 
-let graph = null, version = null, page = null, hovered = null;
+// Стили стрелок — одна таблица на оба режима. Цвет — переменная из CSS, dash — пунктир.
+// Пунктир — только история закрытых фич: «меняла раньше» и блок, которого в main уже нет.
+const STYLE = {
+  add: { color: "--op-add", dash: false }, mod: { color: "--op-mod", dash: false }, del: { color: "--op-del", dash: false },
+  own: { color: "--op-none", dash: false }, context: { color: "--op-none", dash: false },
+  was: { color: "--op-none", dash: true }, gone: { color: "--op-del", dash: true },
+};
+// Общий режим: вид связи → стиль. Фича в работе: добавит — зелёный, изменит — синий, удалит — красный.
+// Закрытая фича: владелец — серый, меняла раньше — серый пунктир, блок удалён из main — красный пунктир.
+const MAIN_STYLE = { adds: "add", changes: "mod", removes: "del", will_replace: "del", owns: "own", changed: "was",
+  removed: "gone", gone: "gone", replaced: "gone" };
+// Режим фичи: стиль — по операции изменённого конца связи.
+const ACTION_STYLE = { ADDED: "add", MODIFIED: "mod", REMOVED: "del" };
+
+let graph = null, version = null, page = null, hovered = null, panelTab = "spec";
+let pathTask = null;  // режим фичи: спека (стрелки всей фичи) или задача (её путь изменений)
+let widePanel = localStorage.getItem("sdd-wide") === "1";  // правая панель шире
 // Адрес страницы: #<вкладка>/<id выбранного узла>.
 const VIEWS = ["changes", "graph"];
 const [hashView, ...hashId] = location.hash.slice(1).split("/");
 let view = VIEWS.includes(hashView) ? hashView : localStorage.getItem("sdd-view") || "changes";
 let selected = hashId.length ? decodeURIComponent(hashId.join("/")) : null;
-let showContext = localStorage.getItem("sdd-context") !== "0";
-let onlyFeature = localStorage.getItem("sdd-only-feature") === "1";  // выбрана фича — только она и её изменения
-// Связи «фича → блок»: что фича меняла, меняет, удалила или заменила.
-const FEATURE_CHANGES = ["owns", "changed", "changes", "removes", "removed", "gone", "replaced", "will_replace"];
+// Фича, открытая в общем режиме: граф её изменений. `graph <фича>` открывает страницу сразу на ней: `/?feature=<ID>`.
+let focusFeature = new URLSearchParams(location.search).get("feature");
+let showLegend = localStorage.getItem("sdd-legend") === "1";  // подписи цветов кружков в шапке столбцов
+const query = () => focusFeature ? "?feature=" + encodeURIComponent(focusFeature) : "";
+let featureInfo = null;  // узел фичи из общего графа: «Нет в main» для панели спеки в режиме фичи
+
+// Узел фичи из общего графа: история фичи, которой нет в графе её изменений.
+async function loadFeatureInfo(slug) {
+  featureInfo = null;
+  if (!slug) return;
+  try {
+    const g = await (await fetch("/graph.json", { cache: "no-store" })).json();
+    featureInfo = (g.nodes || []).find(n => n.id === "feature:" + slug) || null;
+    renderDetail();
+  } catch { /* панель без истории */ }
+}
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
-const byId = () => Object.fromEntries(graph.nodes.map(n => [n.id, n]));
+let index = {};  // узлы по id: строится один раз на загрузку графа
+const byId = () => index;
+function setGraph(g) {
+  graph = g;
+  index = Object.fromEntries(g.nodes.map(n => [n.id, n]));
+}
 const domainName = d => d === "_project" ? "Проект" : d.startsWith("_contracts/") ? "Контракты: " + d.slice(11) : d;
 const isMain = () => graph?.mode === "main";
+const transient = n => (n.removed_block && !n.referenced) || n.pending;
+const groupName = (col, g) => col === "features" ? ({ new: "в работе", archive: "закрыты" })[g] || g
+  : col === "plan" ? (g === "Задачи" ? "задачи" : "") : col !== "docs" ? g : g === "_project" ? "проект" : "поддомен " + g;
+
 // Метки типов: кружок перед подписью типа. Документация — по сущности, элемент контракта — по `Тип:`.
 const DOC_DOTS = { "domain-docs": "--doc-domain", architecture: "--doc-architecture", conventions: "--doc-conventions",
   "project-doc": "--doc-project", adr: "--doc-adr" };
@@ -226,47 +267,47 @@ const TYPE_DOTS = { "операция": "--type-operation", "событие": "-
   "модель": "--type-model" };
 const dot = color => color ? `<i class="dot" style="background:var(${color})" aria-hidden="true"></i>` : "";
 const dotOf = n => n.column === "docs" ? DOC_DOTS[n.kind] : n.kind === "contracts" ? TYPE_DOTS[n.type] : null;
-let showLegend = localStorage.getItem("sdd-legend") === "1";  // подписи цветов в шапке столбцов  // весь main: нет фичи, задач и изменений
-const groupName = (col, g) => col === "features" ? ({ new: "в работе", archive: "закрыты" })[g] || g
-  : col !== "docs" ? g : g === "_project" ? "проект" : "поддомен " + g;
 
-function badge(n) {
-  if (n.kind === "task") return `<span class="badge">${n.done ? "☑ выполнена" : "☐ не выполнена"}</span>`;
-  if (n.kind === "feature") return `<span class="badge">${esc(n.status || "")}</span>`;
-  if (n.removed_block) return `<span class="badge">${n.replaced_with ? `заменён ADR ${esc(n.replaced_with)}` : "удалён из main"}${n.by ? " фичей " + esc(n.by) : ""}</span>`;
-  if (n.missing) return `<span class="badge">нет в main</span>`;
-  if (!n.action) return isMain() ? "" : `<span class="badge">не меняется</span>`;
-  return `<span class="badge"><b>${SIGN[n.action]}</b> ${n.action}</span>`;
+// --- карточка: заголовок, кружок с типом, операция — по строке ---
+function typeLine(n) {
+  const name = n.kind === "contracts" ? n.type || KINDS.contracts : KINDS[n.kind] || n.kind;
+  return `${dot(dotOf(n))}${esc(name)}`;
+}
+
+function opLine(n) {
+  if (n.kind === "task") return n.done ? "☑ выполнена" : "☐ не выполнена";
+  if (n.kind === "feature" || n.kind === "spec") return esc(n.status || "");
+  if (n.removed_block) return `${n.replaced_with ? `заменён ADR ${esc(n.replaced_with)}` : "удалён из main"}${n.by ? " фичей " + esc(n.by) : ""}`;
+  if (n.pending) return `добавит фича ${esc(n.by)}`;
+  if (n.missing) return "нет в main";
+  if (n.action) return `<b>${SIGN[n.action]}</b> ${n.action}`;
+  return isMain() ? "" : "не меняется";
+}
+
+let removing = new Set();  // общий режим: блоки, которые удалит фича в фокусе
+
+// Закрытая фича: что с частью стало в текущем main. Нижняя строка карточки.
+function laterLine(n) {
+  if (n.later_removed) return n.replaced_with
+    ? `в текущем main заменён на ADR ${esc(n.replaced_with)} фичей ${esc(n.later_removed)}`
+    : `в текущем main удалён фичей ${esc(n.later_removed)}`;
+  if (n.later_changed) return `в текущем main изменён фичей ${esc(n.later_changed)}`;
+  return "";
 }
 
 function nodeHtml(n) {
-  const cls = ["node", n.action || "", n.action || n.kind === "task" || isMain() ? "" : "context", n.missing ? "missing" : "",
-    n.removed_block ? "gone" : "",
-    n.id === selected ? "selected" : ""].join(" ");
-  const entity = !["task", "feature"].includes(n.kind) && (n.column === "docs" || (!n.action && !isMain())) ? KINDS[n.kind] : "";
-  const sub = [entity, n.type].filter(Boolean).join(" · ");
-  return `<button class="${cls}" data-id="${esc(n.id)}"><span class="body"><span class="label">${esc(n.label)}</span><br>`
-    + `${badge(n)}${sub ? ` <span class="sub">${dot(dotOf(n))}${esc(sub)}</span>` : ""}</span></button>`;
+  const cls = ["node", removing.has(n.id) ? "will-remove" : "", n.action || "", !isMain() && !n.action && !["task", "spec"].includes(n.kind) ? "context" : "",
+    n.missing ? "missing" : "", n.removed_block ? "gone" : "", n.pending ? "pending" : "",
+    n.id === selected ? "selected" : "", !isMain() && n.id === pathTask ? "active" : ""].join(" ");
+  const op = opLine(n), later = laterLine(n);
+  return `<button class="${cls}" data-id="${esc(n.id)}"><span class="body"><span class="label">${esc(n.label)}</span>`
+    + `<span class="line">${typeLine(n)}</span>${op ? `<span class="line op">${op}</span>` : ""}`
+    + `${later ? `<span class="line later${n.later_removed ? " removed" : ""}">${later}</span>` : ""}</span></button>`;
 }
 
-function visible() {
-  // удалённые блоки — только у выбранной фичи
-  const sel = selected && byId()[selected];
-  const gone = new Set(sel?.kind === "feature"
-    ? graph.edges.filter(e => e.from === sel.id && ["removed", "gone", "replaced"].includes(e.kind)).map(e => e.to) : []);
-  let nodes = graph.nodes.filter(n => (!n.removed_block || n.referenced || gone.has(n.id) || n.id === selected)
-    && (showContext || isMain() || n.action || n.kind === "task"));
-  if (onlyFeature && isMain() && sel?.kind === "feature") {
-    const own = new Set([sel.id, ...graph.edges.filter(e => e.from === sel.id && FEATURE_CHANGES.includes(e.kind)).map(e => e.to)]);
-    nodes = nodes.filter(n => own.has(n.id));
-  }
-  const ids = new Set(nodes.map(n => n.id));
-  return { nodes, edges: graph.edges.filter(e => ids.has(e.from) && ids.has(e.to)) };
-}
-
-// --- шаг 1: домены и блоки ---
+// --- вкладка 1: домены и блоки ---
 function renderChanges() {
-  const changes = isMain() ? graph.nodes.filter(n => !n.missing && !n.removed_block && n.kind !== "feature") : graph.nodes.filter(n => n.action);
+  const changes = isMain() ? graph.nodes.filter(n => !n.missing && !transient(n) && n.kind !== "feature") : graph.nodes.filter(n => n.action);
   if (!changes.length) return `<p class="muted">${isMain() ? "В main нет блоков." : "В delta/ нет изменений."}</p>`;
   const rank = d => d === "_project" ? 2 : d.startsWith("_contracts/") ? 1 : 0;
   changes.sort((a, b) => rank(a.domain) - rank(b.domain) || a.domain.localeCompare(b.domain));
@@ -283,78 +324,145 @@ function renderChanges() {
   }).join("") + `</div>`;
 }
 
-// --- шаг 2: граф связей ---
+// --- вкладка 2: граф ---
+// Общий режим: фокус — выбранный узел, без выбора — наведённый. Выбор главнее наведения.
+const focusId = () => isMain() ? selected || hovered : pathTask;
+
+// Связанные с узлом: он сам и концы его связей.
+function relatedTo(id) {
+  if (!id) return null;
+  return new Set([id, ...graph.edges.filter(e => e.from === id).map(e => e.to), ...graph.edges.filter(e => e.to === id).map(e => e.from)]);
+}
+
+// Режим фичи: путь изменений задачи — по направлению связей: задача → что она реализует и документирует → куда ведут их связи.
+function taskPath(task) {
+  const seen = new Set([task]), queue = [task];
+  while (queue.length) {
+    const id = queue.shift();
+    for (const e of graph.edges) {
+      if (e.from === id && !seen.has(e.to)) { seen.add(e.to); queue.push(e.to); }
+    }
+  }
+  return seen;
+}
+
+// Что видно в графе и что поднять наверх столбцов.
+function layout() {
+  const nodes = byId(), focus = focusId();
+  if (!isMain()) {
+    const path = !pathTask ? null : byId()[pathTask]?.kind === "spec" ? new Set(graph.nodes.map(n => n.id)) : taskPath(pathTask);
+    return { focus, related: path, shown: n => !path || ["task", "spec"].includes(n.kind) || path.has(n.id), top: new Set() };
+  }
+  const related = relatedTo(focus);
+  const base = n => !transient(n) || (related && related.has(n.id));
+  if (selected) return { focus, related, shown: n => base(n) && related.has(n.id), top: new Set() };
+  // Наведение: связанное с узлом — наверх столбцов, кроме столбца самого узла.
+  const col = nodes[focus]?.column;
+  return { focus, related, shown: base, top: related ? new Set([...related].filter(id => nodes[id] && nodes[id].column !== col && id !== focus)) : new Set() };
+}
+
+const sampleLine = style => `<svg width="28" height="10" aria-hidden="true"><path d="M1,5 L27,5" stroke="var(${STYLE[style].color})" stroke-width="2"${STYLE[style].dash ? ' stroke-dasharray="4 3"' : ""}/></svg>`;
+const sampleNode = (border, dashed) => `<i class="sample-node" style="border:1.5px ${dashed ? "dashed" : "solid"} var(${border})"></i>`;
+
+function legendHtml() {
+  const items = isMain() ? [
+    [sampleLine("add"), "фича в работе добавит блок"],
+    [sampleLine("mod"), "фича в работе изменит блок"],
+    [sampleLine("del"), "фича в работе удалит или заменит блок"],
+    [sampleLine("gone"), "закрытая фича удалила или заменила блок, его в main уже нет"],
+    [sampleLine("own"), "закрытая фича — владелец: её версия в main (`Источник:`)"],
+    [sampleLine("was"), "закрытая фича меняла блок раньше, сейчас там версия другой фичи"],
+    [sampleLine("own"), "связи блоков и фич: сценарий → элемент, элемент → модель, документация → элемент, блок → ADR, фича → основа"],
+    [sampleNode("--op-add", false), "блок, который фича в работе добавит. Виден, пока фича под курсором"],
+    [sampleNode("--op-del", false), "блок, который фича в работе удалит"],
+    [sampleNode("--op-del", true), "блок, который удалён из main. Виден вместе с фичей, которая его касалась"],
+  ] : [
+    [sampleLine("add"), "добавление"],
+    [sampleLine("mod"), "модификация"],
+    [sampleLine("del"), "удаление"],
+    [sampleLine("context"), "связь с блоком main без изменений"],
+    [sampleNode("--axis", false), "блок main без изменений, связанный с изменениями: без цветной полосы"],
+    [sampleNode("--hairline", false), "закрытая фича: нижняя строка карточки — что с частью в текущем main. Красным — удалена или заменена"],
+  ];
+  const hint = isMain()
+    ? "Наведение показывает связи узла и поднимает связанное наверх столбцов. Нажатие на фичу открывает её изменения. Нажатие на блок оставляет только его и связанное с ним, повторное — снимает выбор."
+    : "Нажатие на спеку рисует стрелки всей фичи, на задачу — путь её изменений, повторное — снимает. Остальные карточки открываются в панели, выбор спеки или задачи остаётся. Цвет стрелки — операция изменённого блока на её конце.";
+  return `<details class="legend-list"${localStorage.getItem("sdd-legend-open") === "1" ? " open" : ""}><summary>Обозначения</summary>`
+    + `<ul>${items.map(([sample, text]) => `<li>${sample}<span>${esc(text)}</span></li>`).join("")}<li><span class="muted">${esc(hint)}</span></li></ul></details>`;
+}
+
 function renderGraph() {
-  const { nodes } = visible();
+  const { focus, shown: isShown, top } = layout();
+  const feature = isMain() && byId()[focus]?.kind === "feature" ? focus : null;
+  removing = new Set(feature ? graph.edges.filter(e => e.from === feature && ["removes", "will_replace"].includes(e.kind)).map(e => e.to) : []);
+  const nodes = graph.nodes.filter(isShown);
   const shown = COLUMNS.filter(([key]) => isMain() ? key !== "plan" : key !== "features");
   const cols = shown.map(([key, title]) => {
     const groups = new Map();
-    for (const n of nodes.filter(n => n.column === key)) (groups.get(n.group) || groups.set(n.group, []).get(n.group)).push(n);
-    const body = [...groups].map(([g, ns]) => `<div class="group">${key === "plan" ? "" : `<div class="group-name">${esc(groupName(key, g))}</div>`}`
-      + ns.map(nodeHtml).join("") + `</div>`).join("") || `<p class="muted">—</p>`;
-    const button = key === "features"
-      ? ` <button class="toggle${onlyFeature ? " on" : ""}" id="only-feature" title="Выбрана фича — показать только её и её изменения">только выбранная</button>` : "";
+    const lifted = nodes.filter(n => n.column === key && top.has(n.id));
+    if (lifted.length) groups.set("\u0000top", lifted);  // связанное с наведённым — первой группой
+    for (const n of nodes.filter(n => n.column === key && !top.has(n.id))) (groups.get(n.group) || groups.set(n.group, []).get(n.group)).push(n);
+    const body = [...groups].map(([g, ns]) => {
+      const name = g === "\u0000top" ? "связано с " + (byId()[focus]?.label || "") : groupName(key, g);
+      return `<div class="group" data-group="${esc(g)}">${name ? `<div class="group-name">${esc(name)}</div>` : ""}${ns.map(nodeHtml).join("")}</div>`;
+    }).join("") || `<p class="muted">—</p>`;
     const colors = { docs: Object.entries(DOC_DOTS).map(([k, c]) => [KINDS[k], c]), contracts: Object.entries(TYPE_DOTS) }[key];
     const legendButton = colors
       ? ` <button class="toggle${showLegend ? " on" : ""}" data-legend title="Показать, что значат цвета кружков">цвета</button>` : "";
     const legend = colors && showLegend
       ? `<div class="doc-legend">${colors.map(([name, c]) => `<span>${dot(c)}${esc(name)}</span>`).join("")}</div>` : "";
-    return `<section class="column" data-col="${key}"><h3>${title}${button}${legendButton}</h3>${legend}${body}</section>`;
+    return `<section class="column" data-col="${key}"><h3>${title}${legendButton}</h3>${legend}${body}</section>`;
   }).join("");
-  const toolbar = isMain()
-    ? `<p class="sub">Фичи → блоки: сплошная — фича-владелец, её версия в main (\`Источник:\`). Пунктир — меняла раньше, сейчас версия другой фичи. Синие — фичи в работе. Красный пунктир — блоки, которых в main уже нет: видны, когда выбрана фича.</p>`
-    : `<div class="toolbar"><label><input type="checkbox" id="ctx" ${showContext ? "checked" : ""}> блоки, которые не меняются, но связаны с изменениями</label></div>`;
-  return toolbar
-    + `<div class="graph" id="graph" style="grid-template-columns: repeat(${shown.length}, minmax(180px, 1fr))"><svg aria-hidden="true"><defs>${["arrow", "arrow-blue", "arrow-red"].map(id => `<marker id="${id}" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L8,4 L0,8 z"/></marker>`).join("")}</defs></svg>${cols}</div>`;
+  const markers = Object.entries(STYLE).map(([k, s]) => `<marker id="arrow-${k}" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="4.5" markerHeight="4.5" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="var(${s.color})"/></marker>`).join("");
+  return legendHtml()
+    + `<div class="graph" id="graph" style="grid-template-columns: repeat(${shown.length}, minmax(180px, 1fr))"><svg class="edges" aria-hidden="true"><defs>${markers}</defs></svg>${cols}</div>`;
 }
 
+function edgeStyle(e, nodes) {
+  if (isMain()) return MAIN_STYLE[e.kind] || "own";
+  const action = nodes[e.to]?.action || nodes[e.from]?.action;
+  return ACTION_STYLE[action] || "context";
+}
+
+// Стрелки фокуса. Общий режим — связи узла в фокусе. Режим фичи — путь выбранной задачи, без задачи стрелок нет.
 function drawEdges() {
+  const { focus, related } = layout();
   const box = $("#graph");
   if (!box) return;
-  const svg = $("svg", box), origin = box.getBoundingClientRect();
+  const svg = $("svg.edges", box), origin = box.getBoundingClientRect();
   svg.querySelectorAll("path.edge").forEach(p => p.remove());
   const order = Object.fromEntries(COLUMNS.map(([k], i) => [k, i])), nodes = byId();
-  // Стрелки — только у выбранного или наведённого узла: без выбора граф без стрелок.
-  const focus = hovered || selected;
-  for (const e of visible().edges.filter(e => e.from === focus || e.to === focus)) {
+  const edges = !focus ? [] : isMain() ? graph.edges.filter(e => e.from === focus || e.to === focus)
+    : graph.edges.filter(e => related.has(e.from) && related.has(e.to));
+  for (const e of edges) {
     const a = box.querySelector(`.node[data-id="${CSS.escape(e.from)}"]`), b = box.querySelector(`.node[data-id="${CSS.escape(e.to)}"]`);
-    if (!a || !b) continue;
+    if (!a || !b || !a.offsetParent || !b.offsetParent) continue;
     const ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
     const ca = order[nodes[e.from].column], cb = order[nodes[e.to].column];
     const ya = ra.top + ra.height / 2 - origin.top, yb = rb.top + rb.height / 2 - origin.top;
     let d;
     if (ca === cb) {
       const x1 = ra.right - origin.left, x2 = rb.right - origin.left, bend = Math.max(x1, x2) + 36;
-      d = `M${x1},${ya} C${bend},${ya} ${bend},${yb} ${x2},${yb}`;
+      d = `M${x1},${ya} C${bend},${ya} ${bend},${yb - (yb - ya) * 0.15} ${x2},${yb}`;
     } else {
       const fwd = ca < cb;
       const x1 = (fwd ? ra.right : ra.left) - origin.left, x2 = (fwd ? rb.left : rb.right) - origin.left;
-      const mid = (x1 + x2) / 2;
-      d = `M${x1},${ya} C${mid},${ya} ${mid},${yb} ${x2},${yb}`;
+      // Конец кривой — вдоль прямой от начала к концу: угол стрелки следует наклону линии.
+      const mid = (x1 + x2) / 2, cx = x1 + (x2 - x1) * 0.7, cy = ya + (yb - ya) * 0.7;
+      d = `M${x1},${ya} C${mid},${ya} ${cx},${cy} ${x2},${yb}`;
     }
+    const style = edgeStyle(e, nodes), s = STYLE[style];
     const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
     p.setAttribute("d", d);
-    p.setAttribute("class", `edge kind-${e.kind}` + (e.removed ? " removed" : ""));
-    const color = ["changes", "removes", "will_replace"].includes(e.kind) ? "-blue" : ["removed", "gone", "replaced"].includes(e.kind) ? "-red" : "";
-    p.setAttribute("marker-end", `url(#arrow${color})`);
-    p.dataset.from = e.from; p.dataset.to = e.to;
+    // Режим фичи: стрелки карточки, открытой в панели из другого столбца, — толще, остальные — бледнее.
+    const picked = !isMain() && selected && selected !== focus;
+    const emph = picked && (e.from === selected || e.to === selected);
+    p.setAttribute("class", "edge" + (emph ? " emph" : picked ? " dim" : ""));
+    p.setAttribute("stroke", `var(${s.color})`);
+    if (s.dash) p.setAttribute("stroke-dasharray", "4 4");
+    p.setAttribute("marker-end", `url(#arrow-${style})`);
     svg.appendChild(p);
   }
-  highlight();
-}
-
-function highlight() {
-  const box = $("#graph");
-  if (!box) return;
-  const focus = hovered || selected;
-  box.classList.toggle("focus", !!focus);
-  const lit = new Set(focus ? [focus] : []);
-  box.querySelectorAll("path.edge").forEach(p => {
-    const on = !!focus && (p.dataset.from === focus || p.dataset.to === focus);
-    p.classList.toggle("lit", on);
-    if (on) { lit.add(p.dataset.from); lit.add(p.dataset.to); }
-  });
-  box.querySelectorAll(".node").forEach(n => n.classList.toggle("lit", lit.has(n.dataset.id)));
 }
 
 // --- markdown ---
@@ -437,27 +545,57 @@ function list(items, start, depth) {
   return { html: html + `</${tag}>`, next: i };
 }
 
-// --- детали ---
+// --- панель ---
 function renderDetail() {
   const el = $("#detail"), n = graph && byId()[selected];
-  if (!n) { el.innerHTML = `<p class="muted">Выбери блок, задачу или элемент — здесь будут его свойства, текст и связи.</p>`; return; }
+  const wide = `<button class="toggle wide-btn" id="wide" title="Ширина панели">${widePanel ? "→ уже" : "← шире"}</button>`;
+  if (!n) { el.innerHTML = wide + `<p class="muted">Выбери фичу, задачу или блок — здесь будут его свойства, связи и текст.</p>`; return; }
   const nodes = byId(), item = (id, verb) => `<li>${esc(verb)}: <button class="link" data-id="${esc(id)}">${esc(nodes[id]?.label ?? id)}</button></li>`;
-  const links = [...graph.edges.filter(e => e.from === n.id).map(e => item(e.to, EDGE_KINDS[e.kind] || e.kind)),
-    ...graph.edges.filter(e => e.to === n.id).map(e => item(e.from, EDGE_BACK[e.kind] || e.kind))];
-  const where = n.kind === "task" ? "plan.md" : n.kind === "feature" ? n.file
-    : n.removed_block ? `удалён из main/${n.file}. Текст — версия фичи ${n.version}` : n.action ? `delta/${n.file}` : `main/${n.file}`;
+  const links = [...graph.edges.filter(e => e.from === n.id).map(e => item(e.to, verb(e, nodes, false))),
+    ...graph.edges.filter(e => e.to === n.id).map(e => item(e.from, verb(e, nodes, true)))];
+  const where = n.kind === "task" ? "plan.md" : ["feature", "spec"].includes(n.kind) ? n.file
+    : n.removed_block ? `удалён из main/${n.file}. Текст — версия фичи ${n.version}`
+    : n.pending ? `добавит в main/${n.file}` : n.action ? `delta/${n.file}` : `main/${n.file}`;
   const rows = [["сущность", KINDS[n.kind] || n.kind], ["файл", where], n.owner && ["владелец", "sdd-" + n.owner],
     n.action && ["Источник", n.source ? "feature:" + n.source : "None"],
     isMain() && n.props?.["Источник"] && ["Источник", n.props["Источник"]], n.reason && n.reason !== "None" && ["Причина", n.reason]]
     .filter(Boolean);
-  el.innerHTML = `<h2>${esc(n.label)}</h2>${badge(n)}`
+  const op = opLine(n);
+  const later = laterLine(n);
+  el.innerHTML = wide + `<h2>${esc(n.label)}</h2>${op ? `<div class="line op">${op}</div>` : ""}`
+    + (later ? `<div class="line${n.later_removed ? " later removed" : ""}">${later}</div>` : "")
     + `<dl>${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl>`
     + (n.files?.length ? `<h3>Файлы</h3><ul>${n.files.map(f => `<li>${esc(f)}</li>`).join("")}</ul>` : "")
     + (links.length ? `<h3>Связи</h3><ul>${links.join("")}</ul>` : "")
-    + (n.gone?.length ? `<h3>Нет в main</h3><ul>${n.gone.map(g => `<li>${esc(g.name)} — ${esc(g.file)}: `
+    + goneHtml(n.kind === "spec" ? featureInfo?.gone : n.gone)
+    + textHtml(n);
+}
+
+// Глагол связи для панели. Задача → часть delta: по операции части — добавляет, изменяет, удаляет.
+const OP_VERB = { ADDED: "добавляет", MODIFIED: "изменяет", REMOVED: "удаляет" };
+function verb(e, nodes, back) {
+  const op = ["implements", "documents"].includes(e.kind) && OP_VERB[nodes[e.to]?.action];
+  if (op) return back ? op + " задача" : op;
+  return (back ? EDGE_BACK : EDGE_KINDS)[e.kind] || e.kind;
+}
+
+// «Нет в main»: части delta фичи, которых в main нет, и почему.
+function goneHtml(gone) {
+  return (gone?.length ? `<h3>Нет в main</h3><ul>${gone.map(g => `<li>${esc(g.name)} — ${esc(g.file)}: `
       + (g.open && g.action === "ADDED" ? "добавит при sync" : g.action === "REMOVED" && !g.by ? "удалила эта фича"
-        : g.by && g.with ? `заменила фича ${esc(g.by)} на ADR ${esc(g.with)}` : g.by ? `удалила фича ${esc(g.by)}` : "блока больше нет") + `</li>`).join("")}</ul>` : "")
-    + (n.text ? `<h3>${n.action === "REMOVED" ? "Текст в main — удаляется" : "Текст"}</h3><div class="md">${markdown(n.text)}</div>` : "");
+        : g.by && g.with ? `заменила фича ${esc(g.by)} на ADR ${esc(g.with)}` : g.by ? `удалила фича ${esc(g.by)}` : "блока больше нет") + `</li>`).join("")}</ul>` : "");
+}
+
+// Текст узла. У фичи и спеки — вкладки «Спека» и «План», у остальных — текст части.
+function textHtml(n) {
+  if (["feature", "spec"].includes(n.kind)) {
+    const tabs = [["spec", "Спека", n.text], ...(n.plan ? [["plan", "План", n.plan]] : [])];
+    const active = tabs.find(([k]) => k === panelTab) || tabs[0];
+    return `<div class="ptabs" role="tablist">${tabs.map(([k, title]) => `<button data-ptab="${k}" aria-selected="${k === active[0]}">${title}</button>`).join("")}</div>`
+      + `<div class="md">${markdown(active[2] || "")}</div>`;
+  }
+  if (!n.text) return "";
+  return `<h3>${n.action === "REMOVED" ? "Текст в main — удаляется" : "Текст"}</h3><div class="md">${markdown(n.text)}</div>`;
 }
 
 // --- отрисовка и живое обновление ---
@@ -466,30 +604,60 @@ function render() {
   const f = graph.feature;
   $("#title").textContent = `${f.title}`;
   $("#status").textContent = f.status ? `Статус: ${f.status}` : "";
-  $(".legend").hidden = isMain();
-  $('.tabs button[data-view="changes"]').textContent = isMain() ? "1. Домены" : "1. Изменения";
+  $("#back-main").hidden = !focusFeature;
   document.title = `SDD: ${f.slug}`;
-  document.querySelectorAll(".tabs button").forEach(b => b.setAttribute("aria-selected", b.dataset.view === view));
-  $("#view").innerHTML = view === "graph" ? renderGraph() : renderChanges();
   if (selected && !byId()[selected]) selected = null;
-  history.replaceState(null, "", "#" + view + (selected ? "/" + encodeURIComponent(selected) : ""));
+  $("#view").innerHTML = tabsHtml() + (view === "graph" ? renderGraph() : renderChanges());
+  history.replaceState(null, "", location.pathname + query() + "#" + view + (selected ? "/" + encodeURIComponent(selected) : ""));
   renderDetail();
+  $(".viz-root").classList.toggle("wide", widePanel);
   if (view === "graph") requestAnimationFrame(drawEdges);
+}
+
+// Переключатель вида: по центру над графом и «Обозначениями».
+function tabsHtml() {
+  const tabs = [["changes", isMain() ? "Домены" : "Изменения"], ["graph", "Связи"]];
+  return `<nav class="tabs" role="tablist">${tabs.map(([k, title]) =>
+    `<button role="tab" data-view="${k}" aria-selected="${k === view}">${title}</button>`).join("")}</nav>`;
+}
+
+// Перерисовать только граф: при наведении панель не меняется.
+function renderGraphOnly() {
+  if (view !== "graph" || !graph) return;
+  $("#view").innerHTML = tabsHtml() + renderGraph();
+  requestAnimationFrame(drawEdges);
+}
+
+// Открыть граф изменений фичи или вернуться к общему режиму: сразу перечитать граф.
+function openFeature(slug) {
+  focusFeature = slug;
+  selected = null;
+  pathTask = null;
+  loadFeatureInfo(slug);
+  hovered = null;
+  version = null;
+  view = "graph";
+  refresh();
+}
+
+function select(id) {
+  selected = id;
+  render();
 }
 
 async function refresh() {
   try {
-    const v = await (await fetch("/version", { cache: "no-store" })).text();
+    const v = await (await fetch("/version" + query(), { cache: "no-store" })).text();
     $("#live").classList.remove("down");
     $("#view").classList.remove("stale");
     if (v !== version) {
-      const g = await (await fetch("/graph.json", { cache: "no-store" })).json();
+      const g = await (await fetch("/graph.json" + query(), { cache: "no-store" })).json();
       if (page !== null && g.page !== page) { location.reload(); return; }
       page = g.page;
       version = g.version;
       $("#banner").hidden = !g.error;
       if (g.error) $("#banner").textContent = "Не удалось разобрать файлы, показан прошлый граф: " + g.error;
-      else { graph = g; render(); }
+      else { setGraph(g); render(); }
     }
     $("#live").textContent = "● обновлено " + new Date().toLocaleTimeString("ru-RU");
   } catch {
@@ -503,25 +671,47 @@ document.addEventListener("click", ev => {
   if (ev.target.closest("[data-legend]")) {
     showLegend = !showLegend; localStorage.setItem("sdd-legend", showLegend ? "1" : "0"); render(); return;
   }
-  if (ev.target.id === "only-feature") {
-    onlyFeature = !onlyFeature; localStorage.setItem("sdd-only-feature", onlyFeature ? "1" : "0"); render(); return;
-  }
+  if (ev.target.closest("#back-main")) { openFeature(null); return; }
+  const ptab = ev.target.closest("[data-ptab]");
+  if (ptab) { panelTab = ptab.dataset.ptab; renderDetail(); return; }
   const tab = ev.target.closest(".tabs button");
   if (tab) { view = tab.dataset.view; localStorage.setItem("sdd-view", view); render(); return; }
+  if (ev.target.closest("#wide")) { widePanel = !widePanel; localStorage.setItem("sdd-wide", widePanel ? "1" : "0"); render(); return; }
   const node = ev.target.closest("[data-id]");
-  if (node) { selected = node.dataset.id === selected ? null : node.dataset.id; render(); }
+  if (node) {
+    const id = node.dataset.id, n = byId()[id];
+    if (!isMain()) {
+      // Режим фичи: спека — стрелки всей фичи, задача — её путь. Повторное нажатие снимает.
+      // Остальные карточки открываются в панели, выбор спеки или задачи остаётся.
+      if (["task", "spec"].includes(n?.kind)) pathTask = pathTask === id ? null : id;
+      select(id);
+      return;
+    }
+    // Общий режим: нажатие на фичу открывает её изменения, на другой узел — выбирает его, повторное — снимает выбор.
+    if (n?.kind === "feature") { openFeature(id.slice(8)); return; }
+    hovered = null;
+    select(id === selected ? null : id);
+    return;
+  }
+  // Нажатие мимо узлов и элементов управления снимает выбор.
+  if (ev.target.closest("#view") && !ev.target.closest("button, summary, a, input, details") && (selected || pathTask)) {
+    pathTask = null; select(null);
+  }
 });
-document.addEventListener("change", ev => {
-  if (ev.target.id === "ctx") { showContext = ev.target.checked; localStorage.setItem("sdd-context", showContext ? "1" : "0"); render(); }
-
-});
+document.addEventListener("keydown", ev => { if (ev.key === "Escape" && (selected || pathTask)) { pathTask = null; select(null); } });
+document.addEventListener("toggle", ev => {
+  if (ev.target.matches?.("details.legend-list")) localStorage.setItem("sdd-legend-open", ev.target.open ? "1" : "0");
+}, true);
 for (const type of ["mouseover", "focusin"]) document.addEventListener(type, ev => {
   const n = ev.target.closest?.("#graph .node");
   const id = n ? n.dataset.id : null;
-  if (id !== hovered) { hovered = id; drawEdges(); }
+  if (id === hovered || !isMain()) return;
+  hovered = id;
+  if (!selected) renderGraphOnly();  // выбор главнее наведения
 });
 new ResizeObserver(() => view === "graph" && drawEdges()).observe(document.body);
 
+loadFeatureInfo(focusFeature);
 refresh();
 setInterval(refresh, 1000);
 </script>
