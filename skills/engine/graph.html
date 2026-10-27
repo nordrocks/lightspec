@@ -1,0 +1,445 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>SDD: граф изменений</title>
+<style>
+.viz-root {
+  color-scheme: light;
+  --page: #f9f9f7;
+  --surface-1: #fcfcfb;
+  --text-primary: #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted: #898781;
+  --hairline: #e1e0d9;
+  --axis: #c3c2b7;
+  --ring: rgba(11, 11, 11, 0.10);
+  --wash: rgba(11, 11, 11, 0.04);
+  --added: #1baf7a;     /* slot 3, aqua */
+  --modified: #2a78d6;  /* slot 1, blue */
+  --removed: #eb6834;   /* slot 2, orange */
+  --critical: #d03b3b;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) .viz-root {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface-1: #1a1a19; --text-primary: #f0efec; --text-secondary: #c3c2b7;
+    --hairline: #2c2c2a; --axis: #383835; --ring: rgba(255, 255, 255, 0.10); --wash: rgba(255, 255, 255, 0.05);
+    --added: #199e70; --modified: #3987e5; --removed: #d95926;
+  }
+}
+:root[data-theme="dark"] .viz-root {
+  color-scheme: dark;
+  --page: #0d0d0d; --surface-1: #1a1a19; --text-primary: #f0efec; --text-secondary: #c3c2b7;
+  --hairline: #2c2c2a; --axis: #383835; --ring: rgba(255, 255, 255, 0.10); --wash: rgba(255, 255, 255, 0.05);
+  --added: #199e70; --modified: #3987e5; --removed: #d95926;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; }
+.viz-root {
+  font: 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: var(--text-primary); background: var(--page); min-height: 100vh;
+  display: grid; grid-template-columns: 1fr 380px; grid-template-rows: auto 1fr;
+}
+header { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: center;
+  padding: 12px 20px; border-bottom: 1px solid var(--hairline); background: var(--surface-1); }
+h1 { font-size: 15px; margin: 0; font-weight: 600; }
+.muted { color: var(--text-muted); }
+.secondary { color: var(--text-secondary); }
+.tabs { display: flex; gap: 4px; }
+.tabs button, .toggle { font: inherit; color: var(--text-secondary); background: none; border: 1px solid transparent;
+  border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+.tabs button:hover { background: var(--wash); }
+.tabs button[aria-selected="true"] { color: var(--text-primary); border-color: var(--axis); background: var(--surface-1); }
+.legend { display: flex; gap: 14px; align-items: center; color: var(--text-secondary); }
+.legend span { display: inline-flex; gap: 6px; align-items: center; }
+.swatch { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+.swatch.context { border: 1px dashed var(--text-muted); }
+.line-sample { width: 22px; border-top: 1.5px dashed var(--text-muted); display: inline-block; }
+.live { margin-left: auto; color: var(--text-muted); }
+.live.down { color: var(--critical); }
+.banner { grid-column: 1 / -1; margin: 12px 20px 0; padding: 8px 12px; border-radius: 6px;
+  border: 1px solid var(--critical); color: var(--text-primary); background: var(--surface-1); }
+main { padding: 20px; overflow: auto; transition: opacity .2s; }
+main.stale { opacity: .55; }
+aside { border-left: 1px solid var(--hairline); background: var(--surface-1); padding: 16px 18px;
+  overflow: auto; max-height: calc(100vh - 54px); position: sticky; top: 0; }
+
+.ADDED { --mark: var(--added); }
+.MODIFIED { --mark: var(--modified); }
+.REMOVED { --mark: var(--removed); }
+
+/* шаг 1 — домены */
+.domains { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; align-items: start; }
+.card { background: var(--surface-1); border: 1px solid var(--ring); border-radius: 8px; padding: 12px 14px; }
+.card h2 { font-size: 14px; margin: 0 0 2px; font-weight: 600; }
+.counts { color: var(--text-secondary); margin-bottom: 8px; font-variant-numeric: tabular-nums; }
+.kind { margin: 10px 0 4px; color: var(--text-muted); font-size: 12px; }
+
+/* узел */
+.node { display: flex; gap: 8px; align-items: flex-start; width: 100%; text-align: left; font: inherit;
+  color: var(--text-primary); background: var(--surface-1); border: 1px solid var(--ring); border-radius: 6px;
+  padding: 6px 8px 6px 6px; margin: 4px 0; cursor: pointer; position: relative; }
+.node::before { content: ""; flex: none; width: 4px; align-self: stretch; border-radius: 2px; background: var(--mark, transparent); }
+.node:hover, .node:focus-visible { background: var(--wash); outline: none; }
+.node.selected { box-shadow: 0 0 0 2px var(--text-primary); }
+.node.context { border-style: dashed; border-color: var(--axis); color: var(--text-secondary); }
+.node.context::before { display: none; }
+.node.missing .label { font-style: italic; }
+.node.REMOVED .label { text-decoration: line-through; text-decoration-color: var(--text-muted); }
+.node .body { min-width: 0; overflow-wrap: anywhere; }
+.badge { display: inline-block; font-size: 11px; color: var(--text-secondary); white-space: nowrap; }
+.badge b { font-weight: 700; }
+.sub { font-size: 11px; color: var(--text-muted); }
+
+/* шаг 2 — граф */
+.toolbar { display: flex; gap: 16px; align-items: center; margin-bottom: 12px; color: var(--text-secondary); }
+.graph { position: relative; display: grid; grid-template-columns: repeat(4, minmax(180px, 1fr)); gap: 72px; align-items: start; padding-right: 48px; }
+.graph svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; z-index: 0; }
+.column { position: relative; z-index: 1; }
+.column h3 { font-size: 12px; font-weight: 600; color: var(--text-secondary); margin: 0 0 8px;
+  padding-bottom: 6px; border-bottom: 1px solid var(--hairline); }
+.group { margin-bottom: 14px; }
+.group-name { font-size: 11px; color: var(--text-muted); margin: 6px 0 2px; }
+.edge { fill: none; stroke: var(--text-muted); stroke-width: 1.5; opacity: .7; transition: opacity .15s; }
+.edge.removed { stroke-dasharray: 4 4; }
+.graph.focus .edge { opacity: .12; }
+.graph.focus .edge.lit { opacity: 1; stroke: var(--text-primary); stroke-width: 2; }
+.graph.focus .node:not(.lit) > .body, .graph.focus .node:not(.lit)::before { opacity: .35; }
+marker path { fill: var(--text-muted); }
+
+/* текст части: markdown */
+.md { font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.md h4, .md h5, .md h6 { margin: 12px 0 4px; font-size: 13px; font-weight: 600; }
+.md h4 { font-size: 14px; }
+.md p { margin: 6px 0; }
+.md ul, .md ol { margin: 4px 0; padding-left: 20px; }
+.md li { margin: 2px 0; }
+.md code { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--wash); padding: 0 3px; border-radius: 3px; }
+.md table { border-collapse: collapse; margin: 6px 0; width: 100%; }
+.md th, .md td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--hairline); vertical-align: top; }
+.md th { font-weight: 600; color: var(--text-secondary); }
+.md .props { color: var(--text-secondary); font-size: 12px; margin: 2px 0 6px; }
+.md .lang { font-size: 11px; color: var(--text-muted); margin-top: 6px; }
+.md details.diagram { margin: 6px 0; }
+.md details.diagram summary { cursor: pointer; color: var(--text-secondary); font-size: 12px; }
+.md details.diagram summary:hover { color: var(--text-primary); }
+
+/* панель деталей */
+aside h2 { font-size: 14px; margin: 0 0 6px; overflow-wrap: anywhere; }
+aside dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; margin: 10px 0; }
+aside dt { color: var(--text-muted); }
+aside dd { margin: 0; overflow-wrap: anywhere; }
+aside pre { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--page); border: 1px solid var(--hairline);
+  border-radius: 6px; padding: 8px 10px; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
+aside h3 { font-size: 12px; color: var(--text-secondary); margin: 14px 0 4px; font-weight: 600; }
+aside ul { margin: 0; padding-left: 18px; }
+.link { font: inherit; color: var(--text-primary); background: none; border: 0; padding: 0; cursor: pointer;
+  text-decoration: underline; text-decoration-color: var(--axis); text-align: left; }
+</style>
+</head>
+<body>
+<div class="viz-root">
+  <header>
+    <h1 id="title">SDD: граф изменений</h1>
+    <span id="status" class="secondary"></span>
+    <nav class="tabs" role="tablist">
+      <button role="tab" data-view="changes">1. Изменения</button>
+      <button role="tab" data-view="graph">2. Связи</button>
+    </nav>
+    <div class="legend" aria-label="Легенда">
+      <span><i class="swatch" style="background:var(--added)"></i><b>+</b> ADDED</span>
+      <span><i class="swatch" style="background:var(--modified)"></i><b>~</b> MODIFIED</span>
+      <span><i class="swatch" style="background:var(--removed)"></i><b>−</b> REMOVED</span>
+      <span><i class="swatch context"></i>не меняется</span>
+      <span><i class="line-sample"></i>связь удаляемого блока</span>
+    </div>
+    <span id="live" class="live">подключение…</span>
+  </header>
+  <div id="banner" class="banner" hidden></div>
+  <main id="view"></main>
+  <aside id="detail"><p class="muted">Выбери блок, задачу или элемент — здесь будут его свойства, текст и связи.</p></aside>
+</div>
+<script>
+const SIGN = { ADDED: "+", MODIFIED: "~", REMOVED: "−" };
+const KINDS = { requirements: "требования", "domain-docs": "документация поддомена", contracts: "контракт",
+  architecture: "архитектура", conventions: "конвенции", "project-doc": "документ проекта", adr: "ADR", task: "задача plan" };
+const COLUMNS = [["plan", "Задачи plan"], ["req", "Требования"], ["contracts", "Контракты"], ["docs", "Документация и проект"]];
+const EDGE_KINDS = { implements: "реализует", documents: "документация", contract: "виден через контракт",
+  explains: "объясняет", uses: "использует модель", adr: "держится на ADR", replaces: "заменяет" };
+// Связь глазами второго конца: для панели деталей.
+const EDGE_BACK = { implements: "реализует задача", documents: "описывает задачу", contract: "виден в сценариях требования", explains: "объяснён в документации",
+  uses: "модель для", adr: "на нём держится", replaces: "заменён" };
+
+let graph = null, version = null, page = null, hovered = null;
+// Адрес страницы: #<вкладка>/<id выбранного узла>.
+const VIEWS = ["changes", "graph"];
+const [hashView, ...hashId] = location.hash.slice(1).split("/");
+let view = VIEWS.includes(hashView) ? hashView : localStorage.getItem("sdd-view") || "changes";
+let selected = hashId.length ? decodeURIComponent(hashId.join("/")) : null;
+let showContext = localStorage.getItem("sdd-context") !== "0";
+
+const $ = (s, el = document) => el.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const byId = () => Object.fromEntries(graph.nodes.map(n => [n.id, n]));
+const domainName = d => d === "_project" ? "Проект" : d.startsWith("_contracts/") ? "Контракты: " + d.slice(11) : d;
+const groupName = (col, g) => col !== "docs" ? g : g === "_project" ? "проект" : "поддомен " + g;
+
+function badge(n) {
+  if (n.kind === "task") return `<span class="badge">${n.done ? "☑ выполнена" : "☐ не выполнена"}</span>`;
+  if (n.missing) return `<span class="badge">нет в main</span>`;
+  if (!n.action) return `<span class="badge">не меняется</span>`;
+  return `<span class="badge"><b>${SIGN[n.action]}</b> ${n.action}</span>`;
+}
+
+function nodeHtml(n) {
+  const cls = ["node", n.action || "", n.action || n.kind === "task" ? "" : "context", n.missing ? "missing" : "",
+    n.id === selected ? "selected" : ""].join(" ");
+  const entity = n.kind !== "task" && (n.column === "docs" || !n.action) ? KINDS[n.kind] : "";
+  const sub = [entity, n.type].filter(Boolean).join(" · ");
+  return `<button class="${cls}" data-id="${esc(n.id)}"><span class="body"><span class="label">${esc(n.label)}</span><br>`
+    + `${badge(n)}${sub ? ` <span class="sub">${esc(sub)}</span>` : ""}</span></button>`;
+}
+
+function visible() {
+  const nodes = graph.nodes.filter(n => showContext || n.action || n.kind === "task");
+  const ids = new Set(nodes.map(n => n.id));
+  return { nodes, edges: graph.edges.filter(e => ids.has(e.from) && ids.has(e.to)) };
+}
+
+// --- шаг 1: домены и блоки ---
+function renderChanges() {
+  const changes = graph.nodes.filter(n => n.action);
+  if (!changes.length) return `<p class="muted">В delta/ нет изменений.</p>`;
+  const rank = d => d === "_project" ? 2 : d.startsWith("_contracts/") ? 1 : 0;
+  changes.sort((a, b) => rank(a.domain) - rank(b.domain) || a.domain.localeCompare(b.domain));
+  const domains = new Map();
+  for (const n of changes) (domains.get(n.domain) || domains.set(n.domain, []).get(n.domain)).push(n);
+  return `<div class="domains">` + [...domains].map(([d, nodes]) => {
+    const count = a => nodes.filter(n => n.action === a).length;
+    const kinds = new Map();
+    for (const n of nodes) (kinds.get(n.kind) || kinds.set(n.kind, []).get(n.kind)).push(n);
+    return `<section class="card"><h2>${esc(domainName(d))}</h2>`
+      + `<div class="counts">+${count("ADDED")} ~${count("MODIFIED")} −${count("REMOVED")}</div>`
+      + [...kinds].map(([k, ns]) => `<div class="kind">${esc(KINDS[k] || k)}</div>` + ns.map(nodeHtml).join("")).join("")
+      + `</section>`;
+  }).join("") + `</div>`;
+}
+
+// --- шаг 2: граф связей ---
+function renderGraph() {
+  const { nodes } = visible();
+  const cols = COLUMNS.map(([key, title]) => {
+    const groups = new Map();
+    for (const n of nodes.filter(n => n.column === key)) (groups.get(n.group) || groups.set(n.group, []).get(n.group)).push(n);
+    const body = [...groups].map(([g, ns]) => `<div class="group">${key === "plan" ? "" : `<div class="group-name">${esc(groupName(key, g))}</div>`}`
+      + ns.map(nodeHtml).join("") + `</div>`).join("") || `<p class="muted">—</p>`;
+    return `<section class="column" data-col="${key}"><h3>${title}</h3>${body}</section>`;
+  }).join("");
+  return `<div class="toolbar"><label><input type="checkbox" id="ctx" ${showContext ? "checked" : ""}> блоки, которые не меняются, но связаны с изменениями</label></div>`
+    + `<div class="graph" id="graph"><svg aria-hidden="true"><defs><marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L8,4 L0,8 z"/></marker></defs></svg>${cols}</div>`;
+}
+
+function drawEdges() {
+  const box = $("#graph");
+  if (!box) return;
+  const svg = $("svg", box), origin = box.getBoundingClientRect();
+  svg.querySelectorAll("path.edge").forEach(p => p.remove());
+  const order = Object.fromEntries(COLUMNS.map(([k], i) => [k, i])), nodes = byId();
+  for (const e of visible().edges) {
+    const a = box.querySelector(`.node[data-id="${CSS.escape(e.from)}"]`), b = box.querySelector(`.node[data-id="${CSS.escape(e.to)}"]`);
+    if (!a || !b) continue;
+    const ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
+    const ca = order[nodes[e.from].column], cb = order[nodes[e.to].column];
+    const ya = ra.top + ra.height / 2 - origin.top, yb = rb.top + rb.height / 2 - origin.top;
+    let d;
+    if (ca === cb) {
+      const x1 = ra.right - origin.left, x2 = rb.right - origin.left, bend = Math.max(x1, x2) + 36;
+      d = `M${x1},${ya} C${bend},${ya} ${bend},${yb} ${x2},${yb}`;
+    } else {
+      const fwd = ca < cb;
+      const x1 = (fwd ? ra.right : ra.left) - origin.left, x2 = (fwd ? rb.left : rb.right) - origin.left;
+      const mid = (x1 + x2) / 2;
+      d = `M${x1},${ya} C${mid},${ya} ${mid},${yb} ${x2},${yb}`;
+    }
+    const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    p.setAttribute("d", d);
+    p.setAttribute("class", "edge" + (e.removed ? " removed" : ""));
+    p.setAttribute("marker-end", "url(#arrow)");
+    p.dataset.from = e.from; p.dataset.to = e.to;
+    svg.appendChild(p);
+  }
+  highlight();
+}
+
+function highlight() {
+  const box = $("#graph");
+  if (!box) return;
+  const focus = hovered || selected;
+  box.classList.toggle("focus", !!focus);
+  const lit = new Set(focus ? [focus] : []);
+  box.querySelectorAll("path.edge").forEach(p => {
+    const on = !!focus && (p.dataset.from === focus || p.dataset.to === focus);
+    p.classList.toggle("lit", on);
+    if (on) { lit.add(p.dataset.from); lit.add(p.dataset.to); }
+  });
+  box.querySelectorAll(".node").forEach(n => n.classList.toggle("lit", lit.has(n.dataset.id)));
+}
+
+// --- markdown ---
+// Небольшой рендер для текста частей: заголовки, свойства, абзацы, списки, таблицы, fence, `код`, **жирный**.
+// Ссылки `<вид>:<идентификатор>` на узлы графа — кнопки.
+const REF = /(^|[^\w:/.-])((?:req|contract|adr|feature|doc):[A-Za-z0-9_./-]*[A-Za-z0-9])/g;
+
+function inline(text) {
+  const nodes = byId();
+  return esc(text)
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
+    .replace(REF, (m, pre, ref) => nodes[ref] ? `${pre}<button class="link" data-id="${esc(ref)}">${ref}</button>` : m);
+}
+
+function markdown(text) {
+  const lines = text.split("\n"), out = [];
+  let i = 0, para = [];
+  const flush = () => { if (para.length) out.push(`<p>${para.map(inline).join("<br>")}</p>`); para = []; };
+  const isProp = l => /^[A-ZА-ЯЁ][A-Za-zА-Яа-яЁё]*( [A-Za-zА-Яа-яЁё]+)*: \S/.test(l);
+  while (i < lines.length) {
+    const line = lines[i];
+    const fence = line.match(/^(`{3,})(.*)$/);
+    if (fence) {
+      flush();
+      const body = [];
+      for (i++; i < lines.length && !(lines[i].startsWith(fence[1]) && /^`+$/.test(lines[i])); i++) body.push(lines[i]);
+      i++;
+      const code = `<pre>${esc(body.join("\n"))}</pre>`;
+      if (fence[2].trim() === "mermaid") out.push(`<details class="diagram"><summary>диаграмма mermaid — показать</summary>${code}</details>`);
+      else out.push((fence[2] ? `<div class="lang">${esc(fence[2])}</div>` : "") + code);
+      continue;
+    }
+    const h = line.match(/^(#{1,3}) (.*)$/);
+    if (h) {
+      flush();
+      out.push(`<h${h[1].length + 3}>${inline(h[2])}</h${h[1].length + 3}>`);
+      const props = [];
+      for (i++; i < lines.length && isProp(lines[i]); i++) props.push(lines[i]);
+      if (props.length) out.push(`<div class="props">${props.map(inline).join("<br>")}</div>`);
+      continue;
+    }
+    if (line.startsWith("|")) {
+      flush();
+      const rows = [];
+      for (; i < lines.length && lines[i].startsWith("|"); i++) rows.push(lines[i].trim().slice(1, -1).split(/(?<!\\)\|/).map(c => c.trim()));
+      const body = rows.filter((r, k) => !(k === 1 && r.every(c => /^:?-+:?$/.test(c))));
+      out.push(`<table><thead><tr>${body[0].map(c => `<th>${inline(c)}</th>`).join("")}</tr></thead><tbody>`
+        + body.slice(1).map(r => `<tr>${r.map(c => `<td>${inline(c)}</td>`).join("")}</tr>`).join("") + `</tbody></table>`);
+      continue;
+    }
+    if (/^\s*([-*]|\d+\.) /.test(line)) {
+      flush();
+      const items = [];
+      for (; i < lines.length && (/^\s*([-*]|\d+\.) /.test(lines[i]) || (lines[i].startsWith("  ") && lines[i].trim())); i++) {
+        const m = lines[i].match(/^(\s*)([-*]|\d+\.) (.*)$/);
+        if (m) items.push({ depth: Math.floor(m[1].length / 2), ordered: /\d/.test(m[2]), text: m[3] });
+        else if (items.length) items[items.length - 1].text += " " + lines[i].trim();
+      }
+      out.push(list(items, 0, 0).html);
+      continue;
+    }
+    if (!line.trim()) { flush(); i++; continue; }
+    para.push(line);
+    i++;
+  }
+  flush();
+  return out.join("");
+}
+
+// Вложенный список: пункты глубже текущего — внутрь предыдущего пункта.
+function list(items, start, depth) {
+  const tag = items[start].ordered ? "ol" : "ul";
+  let html = `<${tag}>`, i = start;
+  while (i < items.length && items[i].depth >= depth) {
+    if (items[i].depth > depth) { const sub = list(items, i, items[i].depth); html = html.replace(/<\/li>$/, sub.html + "</li>"); i = sub.next; continue; }
+    html += `<li>${inline(items[i].text)}</li>`;
+    i++;
+  }
+  return { html: html + `</${tag}>`, next: i };
+}
+
+// --- детали ---
+function renderDetail() {
+  const el = $("#detail"), n = graph && byId()[selected];
+  if (!n) { el.innerHTML = `<p class="muted">Выбери блок, задачу или элемент — здесь будут его свойства, текст и связи.</p>`; return; }
+  const nodes = byId(), item = (id, verb) => `<li>${esc(verb)}: <button class="link" data-id="${esc(id)}">${esc(nodes[id]?.label ?? id)}</button></li>`;
+  const links = [...graph.edges.filter(e => e.from === n.id).map(e => item(e.to, EDGE_KINDS[e.kind] || e.kind)),
+    ...graph.edges.filter(e => e.to === n.id).map(e => item(e.from, EDGE_BACK[e.kind] || e.kind))];
+  const where = n.kind === "task" ? "plan.md" : n.action ? `delta/${n.file}` : `main/${n.file}`;
+  const rows = [["сущность", KINDS[n.kind] || n.kind], ["файл", where], n.owner && ["владелец", "sdd-" + n.owner],
+    n.action && ["Источник", n.source ? "feature:" + n.source : "None"], n.reason && n.reason !== "None" && ["Причина", n.reason]]
+    .filter(Boolean);
+  el.innerHTML = `<h2>${esc(n.label)}</h2>${badge(n)}`
+    + `<dl>${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl>`
+    + (n.files?.length ? `<h3>Файлы</h3><ul>${n.files.map(f => `<li>${esc(f)}</li>`).join("")}</ul>` : "")
+    + (links.length ? `<h3>Связи</h3><ul>${links.join("")}</ul>` : "")
+    + (n.text ? `<h3>${n.action === "REMOVED" ? "Текст в main — удаляется" : "Текст"}</h3><div class="md">${markdown(n.text)}</div>` : "");
+}
+
+// --- отрисовка и живое обновление ---
+function render() {
+  if (!graph || !graph.nodes) return;
+  const f = graph.feature;
+  $("#title").textContent = `${f.title}`;
+  $("#status").textContent = `Статус: ${f.status}`;
+  document.title = `SDD: ${f.slug}`;
+  document.querySelectorAll(".tabs button").forEach(b => b.setAttribute("aria-selected", b.dataset.view === view));
+  $("#view").innerHTML = view === "graph" ? renderGraph() : renderChanges();
+  if (selected && !byId()[selected]) selected = null;
+  history.replaceState(null, "", "#" + view + (selected ? "/" + encodeURIComponent(selected) : ""));
+  renderDetail();
+  if (view === "graph") requestAnimationFrame(drawEdges);
+}
+
+async function refresh() {
+  try {
+    const v = await (await fetch("/version", { cache: "no-store" })).text();
+    $("#live").classList.remove("down");
+    $("#view").classList.remove("stale");
+    if (v !== version) {
+      const g = await (await fetch("/graph.json", { cache: "no-store" })).json();
+      if (page !== null && g.page !== page) { location.reload(); return; }
+      page = g.page;
+      version = g.version;
+      $("#banner").hidden = !g.error;
+      if (g.error) $("#banner").textContent = "Не удалось разобрать файлы, показан прошлый граф: " + g.error;
+      else { graph = g; render(); }
+    }
+    $("#live").textContent = "● обновлено " + new Date().toLocaleTimeString("ru-RU");
+  } catch {
+    $("#live").textContent = "сервер недоступен";
+    $("#live").classList.add("down");
+    $("#view").classList.add("stale");
+  }
+}
+
+document.addEventListener("click", ev => {
+  const tab = ev.target.closest(".tabs button");
+  if (tab) { view = tab.dataset.view; localStorage.setItem("sdd-view", view); render(); return; }
+  const node = ev.target.closest("[data-id]");
+  if (node) { selected = node.dataset.id === selected ? null : node.dataset.id; render(); }
+});
+document.addEventListener("change", ev => {
+  if (ev.target.id === "ctx") { showContext = ev.target.checked; localStorage.setItem("sdd-context", showContext ? "1" : "0"); render(); }
+});
+for (const type of ["mouseover", "focusin"]) document.addEventListener(type, ev => {
+  const n = ev.target.closest?.("#graph .node");
+  const id = n ? n.dataset.id : null;
+  if (id !== hovered) { hovered = id; highlight(); }
+});
+new ResizeObserver(() => view === "graph" && drawEdges()).observe(document.body);
+
+refresh();
+setInterval(refresh, 1000);
+</script>
+</body>
+</html>
