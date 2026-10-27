@@ -150,7 +150,8 @@ python3 <папка скилов>/engine <команда> <аргументы>
 Граф показывает систему и фичи: что от чего зависит, кто что менял, что изменит фича.
 
 ```sh
-python3 skills/engine graph --specs examples/specs --open
+python3 <папка скилов>/engine graph --open          # весь main и все фичи
+python3 <папка скилов>/engine graph 012 --open      # фича 012
 ```
 
 **Общий режим** — весь main и все фичи, как на картинке в начале. Наведение показывает связи, нажатие на блок оставляет только связанное с ним. У фичи в работе видно, что она добавит, изменит и удалит. У закрытой — чьи версии блоков сейчас в main и что уже удалено.
@@ -162,19 +163,6 @@ python3 skills/engine graph --specs examples/specs --open
 Светлая и тёмная тема — по настройке системы.
 
 Подробно — в [`skills/engine/GRAPH.md`](skills/engine/GRAPH.md).
-
-## Пример
-
-`examples/specs/` — небольшой проект «вход и блокировка аккаунта» с историей:
-- `007` → `012` → `015` закрыты
-- `016`–`019` — по фиче в каждом статусе от `draft` до `implementing`
-
-Пример собран настоящими командами `check-plan` и `sync`. Его удобно смотреть в графе:
-
-```sh
-python3 skills/engine graph --specs examples/specs --open
-python3 skills/engine graph 016 --specs examples/specs --open
-```
 
 ## Документация
 
